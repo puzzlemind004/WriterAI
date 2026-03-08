@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+
+# Environnement local
+.env
+
+# Base de données locale
+*.db
+*.db-journal
+
+# Projets générés
+projects/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
