@@ -68,14 +68,21 @@ class FileManager:
         """
         Vérifie qu'un chemin relatif reste bien sous `base`.
         Lève ValueError en cas de tentative de path traversal.
-        Utilise os.path.abspath (sans suivre les symlinks) plutôt que resolve()
-        pour éviter que des symlinks contournent la protection.
+
+        - Utilise os.path.abspath (sans suivre les symlinks)
+        - Normalise les séparateurs pour Windows (UNC paths inclus)
+        - Refuse les chemins vides ou identiques à la base (pas de fichier cible)
         """
-        import os
-        base_abs = os.path.abspath(base)
-        target_abs = os.path.abspath(os.path.join(base_abs, relative))
-        if not target_abs.startswith(base_abs + os.sep) and target_abs != base_abs:
+        if not relative or not relative.strip():
+            raise ValueError("Le chemin relatif ne peut pas être vide.")
+
+        base_abs = os.path.normcase(os.path.abspath(base))
+        target_abs = os.path.normcase(os.path.abspath(os.path.join(base_abs, relative)))
+
+        # target doit être SOUS base, pas égal à base (on veut un fichier, pas le dossier lui-même)
+        if not target_abs.startswith(base_abs + os.sep):
             raise ValueError(f"Chemin invalide (traversal détecté) : {relative!r}")
+
         return Path(target_abs)
 
     # --- Lorebook ---
@@ -191,11 +198,37 @@ class FileManager:
 
     @staticmethod
     def _slugify(name: str) -> str:
-        """Convertit un nom en nom de fichier valide."""
-        return (
-            name.lower()
+        """
+        Convertit un nom en nom de fichier valide.
+        - Supprime les null bytes et caractères de contrôle
+        - Remplace les caractères dangereux
+        - Tronque à 100 caractères pour éviter les limites filesystem
+        - Lève ValueError si le résultat est vide
+        """
+        if not name or not name.strip():
+            raise ValueError("Le nom ne peut pas être vide.")
+
+        # Supprime les null bytes et caractères de contrôle (< 0x20)
+        cleaned = "".join(c for c in name if ord(c) >= 0x20 and c != "\x7f")
+
+        slug = (
+            cleaned.lower()
             .replace(" ", "_")
             .replace("'", "")
             .replace("/", "_")
             .replace("\\", "_")
+            .replace(":", "_")
+            .replace("*", "_")
+            .replace("?", "_")
+            .replace('"', "_")
+            .replace("<", "_")
+            .replace(">", "_")
+            .replace("|", "_")
         )
+
+        slug = slug[:100].strip("_")
+
+        if not slug:
+            raise ValueError(f"Le nom '{name}' produit un slug vide après nettoyage.")
+
+        return slug
