@@ -47,7 +47,7 @@ class ValidatorAgent(BaseAgent):
         if note >= min_score:
             return AgentResult(
                 success=True,
-                summary=f"Chapitre {chapter_number} validé (note {note}/10 ≥ seuil {min_score})",
+                summary=f"Chapitre {chapter_number} validé (note {note}/10 >= seuil {min_score})",
                 data={
                     "decision": "VALIDATED",
                     "note": note,

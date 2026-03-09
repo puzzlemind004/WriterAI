@@ -3,7 +3,6 @@ Agent Writer — Rédige un chapitre complet.
 Reçoit la fiche chapitre, le lorebook sélectif, l'état du monde
 et les règles d'écriture. Produit le chapitre rédigé + les nouveautés inventées.
 """
-import json
 import logging
 from engine.agents.base import BaseAgent, AgentContext, AgentResult
 from engine.storage.file_manager import FileManager
@@ -21,32 +20,16 @@ Tu dois écrire le chapitre complet en respectant scrupuleusement :
 - Le ton et le style demandés
 - Les règles d'écriture fournies
 
-Tu peux inventer des détails non présents dans le lorebook (dialogues, descriptions,
-personnages secondaires, lieux mineurs) mais tu dois les lister explicitement.
-
-Réponds en JSON strictement valide avec cette structure :
-{
-  "chapitre": "Le texte complet du chapitre rédigé en markdown",
-  "titre": "Le titre définitif du chapitre",
-  "nouveautes": {
-    "personnages": [
-      {"nom": "Nom", "description": "Description courte pour le lorebook"}
-    ],
-    "lieux": [
-      {"nom": "Nom", "description": "Description courte pour le lorebook"}
-    ],
-    "lore": [
-      {"nom": "Nom de l'élément", "description": "Description courte pour le lorebook"}
-    ]
-  }
-}
-
-Règles d'écriture générales (sauf si surchargées par les règles spécifiques) :
+Règles d'écriture générales :
 - Privilégie le "show don't tell"
 - Les dialogues doivent révéler le caractère des personnages
 - Alterne descriptions, actions et dialogues
 - Chaque scène doit avoir un but narratif clair
-- Réponds UNIQUEMENT avec le JSON, sans texte avant ou après.
+- Vise 1500 à 3000 mots par chapitre
+
+Réponds UNIQUEMENT avec le texte du chapitre, rien d'autre.
+Commence directement par le titre du chapitre sur la première ligne (ex: # Titre),
+puis le texte. Pas de commentaire, pas d'explication, pas de JSON.
 """
 
 
@@ -81,29 +64,27 @@ class WriterAgent(BaseAgent):
             world_state, writing_style, tone_keywords
         )
 
-        response = self._llm_call(ctx, SYSTEM_PROMPT, user_prompt, temperature=0.8, max_tokens=8192)
+        response = self._llm_call(
+            ctx, SYSTEM_PROMPT, user_prompt,
+            temperature=0.8, max_tokens=16384,
+            timeout=1800,  # 30 minutes — filet de sécurité, ne devrait jamais se déclencher
+        )
 
-        try:
-            result = self._parse_json(response.content)
-        except ValueError as e:
-            return AgentResult(
-                success=False,
-                summary="Réponse LLM non parseable",
-                error=str(e),
-                llm_response=response,
-            )
+        chapter_text = response.content.strip()
 
-        chapter_text = result.get("chapitre", "")
-        titre = result.get("titre", f"Chapitre {chapter_number}")
-        nouveautes = result.get("nouveautes", {})
-
-        if not chapter_text.strip():
+        if not chapter_text:
             return AgentResult(
                 success=False,
                 summary="Chapitre vide généré",
-                error="Le LLM a retourné un chapitre vide.",
+                error="Le LLM a retourné une réponse vide.",
                 llm_response=response,
             )
+
+        # Extrait le titre de la première ligne si présent (# Titre)
+        lines = chapter_text.splitlines()
+        titre = f"Chapitre {chapter_number}"
+        if lines and lines[0].startswith("#"):
+            titre = lines[0].lstrip("#").strip()
 
         fm.write_chapter(chapter_number, chapter_text)
 
@@ -114,7 +95,7 @@ class WriterAgent(BaseAgent):
                 "chapter_number": chapter_number,
                 "titre": titre,
                 "char_count": len(chapter_text),
-                "nouveautes": nouveautes,
+                "nouveautes": {},  # Délégué au LoreExtractor
             },
             llm_response=response,
         )

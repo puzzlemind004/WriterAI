@@ -100,24 +100,28 @@ class BaseAgent(ABC):
             end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
             text = "\n".join(lines[start:end]).strip()
 
-        # Tentative de parse directe
+        # Tentative de parse directe — on privilégie les objets {...}
         try:
-            return json.loads(text)
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+            # Si c'est une liste, on essaie quand même de trouver un objet dans le texte
         except json.JSONDecodeError:
             pass
 
-        # Tentative de récupération : cherche le premier { ou [ et le dernier } ou ]
-        for start_char, end_char in [('{', '}'), ('[', ']')]:
-            start = text.find(start_char)
-            end = text.rfind(end_char)
-            if start != -1 and end != -1 and end > start:
-                try:
-                    return json.loads(text[start:end + 1])
-                except json.JSONDecodeError:
-                    pass
+        # Tentative de récupération : cherche le premier { et le dernier } correspondant
+        start = text.find('{')
+        end = text.rfind('}')
+        if start != -1 and end != -1 and end > start:
+            try:
+                parsed = json.loads(text[start:end + 1])
+                if isinstance(parsed, dict):
+                    return parsed
+            except json.JSONDecodeError:
+                pass
 
         raise ValueError(
-            f"Impossible de parser le JSON depuis la réponse LLM.\n"
+            f"Impossible de parser un objet JSON depuis la réponse LLM.\n"
             f"Contenu reçu (200 premiers caractères) : {content[:200]!r}"
         )
 
@@ -128,6 +132,7 @@ class BaseAgent(ABC):
         user_prompt: str,
         temperature: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        timeout: Optional[int] = None,
     ) -> LLMResponse:
         """
         Raccourci pour appeler le LLM depuis un agent.
@@ -138,6 +143,7 @@ class BaseAgent(ABC):
             user_prompt=user_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            timeout=timeout,
         )
         logger.debug(
             f"[{self.name}] LLM — "

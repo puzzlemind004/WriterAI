@@ -18,11 +18,12 @@ litellm.suppress_debug_info = True
 class LLMConfig:
     """Configuration LLM pour un projet ou un appel spécifique."""
     provider: str                    # "openai", "anthropic", "mistral", "ollama", ...
-    model: str                       # "gpt-4o", "claude-opus-4-6", "qwen3:30b", ...
+    model: str                       # "gpt-4o", "claude-opus-4-6", "gpt-oss:20b", ...
     api_key: Optional[str] = None    # Pas nécessaire pour Ollama
     temperature: float = 0.7
     max_tokens: int = 4096
     api_base: Optional[str] = None   # Obligatoire pour Ollama : "http://localhost:11434"
+    thinking: Optional[str] = None   # "off", "low", "medium", "high" — pour les modèles avec thinking
 
 
 @dataclass
@@ -44,8 +45,9 @@ class LLMClient:
     def __init__(self, config: LLMConfig):
         self.config = config
 
-    # Timeout par défaut en secondes (couvre les gros chapitres sur Ollama)
-    DEFAULT_TIMEOUT = 600
+    # Timeout par défaut en secondes — 1800 pour couvrir les gros chapitres
+    # sur les modèles locaux lents (qwen3:30b, gpt-oss...)
+    DEFAULT_TIMEOUT = 1800
 
     def call(
         self,
@@ -70,7 +72,7 @@ class LLMClient:
         model_string = self._build_model_string()
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
+            {"role": "user", "content": self._prepare_user_prompt(user_prompt)},
         ]
 
         kwargs = {
@@ -84,6 +86,10 @@ class LLMClient:
             kwargs["api_key"] = self.config.api_key
         if self.config.api_base:
             kwargs["api_base"] = self.config.api_base
+        if self.config.thinking == "off":
+            kwargs["extra_body"] = {"think": False}
+        elif self.config.thinking in ("low", "medium", "high"):
+            kwargs["extra_body"] = {"reasoning_effort": self.config.thinking}
 
         start = time.time()
         try:
@@ -134,6 +140,9 @@ class LLMClient:
 
         return result
 
+    def _prepare_user_prompt(self, user_prompt: str) -> str:
+        return user_prompt
+
     def _build_model_string(self) -> str:
         """
         LiteLLM attend un format "provider/model" pour certains providers.
@@ -149,14 +158,18 @@ def make_ollama_client(
     api_base: str = "http://localhost:11434",
     temperature: float = 0.7,
     max_tokens: int = 4096,
+    thinking: Optional[str] = None,
 ) -> LLMClient:
-    """Factory rapide pour Ollama (pas de clé API nécessaire)."""
+    """Factory rapide pour Ollama (pas de clé API nécessaire).
+    thinking : None (défaut modèle), "off" (désactivé), "low", "medium", "high".
+    """
     return LLMClient(LLMConfig(
         provider="ollama",
         model=model,
         api_base=api_base,
         temperature=temperature,
         max_tokens=max_tokens,
+        thinking=thinking,
     ))
 
 
