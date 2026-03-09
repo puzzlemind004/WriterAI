@@ -2,9 +2,16 @@
 Point d'entrée de l'API FastAPI.
 Lancer avec : uvicorn api.main:app --reload
 """
+import asyncio
+import sys
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+
+# Workaround Python 3.13 / Windows : ProactorEventLoop échoue sur getaddrinfo
+# avec des adresses IP littérales (asyncpg). SelectorEventLoop fonctionne.
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from fastapi.middleware.cors import CORSMiddleware
 
 from engine.storage.database import init_db

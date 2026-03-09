@@ -7,13 +7,20 @@ from .models import Base
 from config.settings import settings
 
 
+def _make_engine_kwargs() -> dict:
+    """Retourne les kwargs pour create_async_engine selon le type de DB."""
+    if settings.database_url.startswith("postgresql"):
+        return {"connect_args": {"ssl": "disable"}}
+    return {}
+
+
 # Engine async (pour FastAPI)
-async_engine = create_async_engine(settings.database_url, echo=False)
+async_engine = create_async_engine(settings.database_url, echo=False, **_make_engine_kwargs())
 AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
 
-# Engine sync (pour Celery workers)
+# Engine sync (pour Celery workers — SQLite uniquement)
 _sync_url = settings.database_url.replace("sqlite+aiosqlite", "sqlite")
-sync_engine = create_engine(_sync_url, echo=False)
+sync_engine = create_engine(_sync_url, echo=False) if _sync_url.startswith("sqlite") else None
 
 
 async def init_db() -> None:
