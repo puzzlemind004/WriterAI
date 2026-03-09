@@ -1,3 +1,4 @@
+from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
 
@@ -22,6 +23,9 @@ class Settings(BaseSettings):
 
     # Redis (for Celery task queue)
     redis_url: str = "redis://localhost:6379/0"
+
+    # Chiffrement des clés API (Fernet)
+    writerai_secret_key: Optional[str] = None
 
     # Logging
     log_level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")

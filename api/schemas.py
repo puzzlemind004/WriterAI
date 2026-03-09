@@ -45,6 +45,7 @@ class ProjectDetail(ProjectSummary):
     source_text: str
     llm_provider: str
     llm_model: str
+    llm_thinking: Optional[str]
     target_chapter_count: Optional[int]
     writing_style: Optional[str]
     tone_keywords: list[str]

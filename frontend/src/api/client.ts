@@ -44,6 +44,7 @@ export interface Project {
   source_text?: string
   llm_provider?: string
   llm_model?: string
+  llm_thinking?: string | null
   target_chapter_count?: number | null
   writing_style?: string | null
   tone_keywords?: string[]

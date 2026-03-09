@@ -34,6 +34,7 @@ class Project(Base):
     llm_model = Column(String, nullable=False)
     _llm_api_key_encrypted = Column("llm_api_key", String, nullable=True)
     llm_api_base = Column(String, nullable=True)
+    llm_thinking = Column(String, nullable=True)  # "off", "low", "medium", "high"
 
     @property
     def llm_api_key(self) -> str | None:

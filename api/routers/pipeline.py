@@ -30,6 +30,7 @@ def _build_orchestrator_config(project: Project, source_text: str):
         llm = make_ollama_client(
             model=project.llm_model,
             api_base=project.llm_api_base or "http://localhost:11434",
+            thinking=project.llm_thinking,
         )
     else:
         llm = make_client(

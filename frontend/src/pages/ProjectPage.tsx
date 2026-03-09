@@ -41,7 +41,6 @@ function PipelineBar({ projectId }: { projectId: string }) {
 
     es.onmessage = (e) => {
       const data = JSON.parse(e.data)
-      // Les events du pipeline mettent à jour l'état local
       if (data.type === 'agent_started') {
         qc.setQueryData(['pipeline', projectId], (prev: PipelineStatus | undefined) =>
           prev ? { ...prev, current_agent: data.payload?.agent, status: 'running' } : prev
@@ -50,6 +49,9 @@ function PipelineBar({ projectId }: { projectId: string }) {
         qc.setQueryData(['pipeline', projectId], (prev: PipelineStatus | undefined) =>
           prev ? { ...prev, current_agent: null } : prev
         )
+      } else if (data.type === 'chapter_state_changed' && data.payload?.new_state === 'validated') {
+        // Un chapitre vient d'être validé : rafraîchit la liste en temps réel
+        qc.invalidateQueries({ queryKey: ['chapters', projectId] })
       } else if (data.type === 'pipeline_completed') {
         es.close()
         setIsStreaming(false)
@@ -258,13 +260,13 @@ export default function ProjectPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
 
-  const { data: project } = useQuery({
+  const { data: project, error: projectError } = useQuery({
     queryKey: ['project', id],
     queryFn: () => api.projects.get(id!),
     enabled: !!id,
   })
 
-  const { data: chapters, isLoading: chaptersLoading } = useQuery({
+  const { data: chapters, isLoading: chaptersLoading, error: chaptersError } = useQuery({
     queryKey: ['chapters', id],
     queryFn: () => api.content.chapters(id!),
     enabled: !!id,
@@ -282,12 +284,23 @@ export default function ProjectPage() {
           Projets
         </button>
 
-        {project && (
+        {projectError ? (
+          <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 mb-6 text-red-400 text-sm">
+            Impossible de charger le projet : {(projectError as Error).message}
+          </div>
+        ) : project && (
           <div className="mb-6">
             <h1 className="text-2xl font-bold text-white">{project.name}</h1>
-            {project.writing_style && (
-              <p className="text-slate-400 mt-1">{project.writing_style}</p>
-            )}
+            <div className="flex items-center gap-3 mt-1 text-sm text-slate-500">
+              {project.writing_style && <span>{project.writing_style}</span>}
+              {project.llm_model && (
+                <>
+                  {project.writing_style && <span>·</span>}
+                  <span>{project.llm_model}</span>
+                  {project.llm_thinking && <span className="text-slate-600">thinking={project.llm_thinking}</span>}
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -298,19 +311,26 @@ export default function ProjectPage() {
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-white">Chapitres</h2>
-            {chapters && (
-              <span className="text-sm text-slate-500">{chapters.length} chapitre{chapters.length > 1 ? 's' : ''}</span>
+            {chapters && chapters.length > 0 && (
+              <span className="text-sm text-slate-500">
+                {chapters.filter(c => c.state === 'validated').length}/{chapters.length} rédigé{chapters.length > 1 ? 's' : ''}
+              </span>
             )}
           </div>
 
-          {chaptersLoading ? (
+          {chaptersError ? (
+            <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 text-red-400 text-sm">
+              Erreur de chargement : {(chaptersError as Error).message}
+            </div>
+          ) : chaptersLoading ? (
             <div className="flex justify-center py-10">
               <Loader2 className="w-6 h-6 animate-spin text-slate-600" />
             </div>
           ) : !chapters?.length ? (
-            <div className="text-center py-10 text-slate-600">
-              <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-40" />
-              <p className="text-sm">Lancez le pipeline pour générer les chapitres</p>
+            <div className="text-center py-10 text-slate-700 border border-dashed border-slate-800 rounded-xl">
+              <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-30" />
+              <p className="text-sm">Aucun chapitre pour l'instant</p>
+              <p className="text-xs mt-1 text-slate-800">Lancez le pipeline ci-dessus pour démarrer la génération</p>
             </div>
           ) : (
             <div className="space-y-2">

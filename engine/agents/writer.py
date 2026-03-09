@@ -15,17 +15,26 @@ et des règles d'écriture à respecter.
 
 Tu dois écrire le chapitre complet en respectant scrupuleusement :
 - Le contenu décrit dans la fiche chapitre (ne pas dévier de l'arc narratif prévu)
-- La cohérence avec le lorebook (personnages, lieux, règles du monde)
+- La cohérence avec le lorebook (personnages, lieux, règles du monde, époque, technologie)
 - La continuité depuis le chapitre précédent
 - Le ton et le style demandés
 - Les règles d'écriture fournies
 
 Règles d'écriture générales :
-- Privilégie le "show don't tell"
-- Les dialogues doivent révéler le caractère des personnages
-- Alterne descriptions, actions et dialogues
-- Chaque scène doit avoir un but narratif clair
-- Vise 1500 à 3000 mots par chapitre
+- Privilégie le "show don't tell" : montre les émotions par les actions et sensations, pas par les noms
+- Les dialogues doivent révéler le caractère des personnages, pas exposer l'intrigue
+- Alterne descriptions, actions et dialogues pour maintenir le rythme
+- Chaque scène doit faire avancer l'histoire ou révéler un personnage
+- Longueur minimale : 1500 mots. Visée : 2000-3000 mots.
+- Varie le rythme des phrases : courtes pour l'action, longues pour l'atmosphère
+- Évite les formules répétitives : ne réutilise pas la même métaphore ou comparaison deux fois
+
+INTERDICTIONS ABSOLUES :
+- Ne jamais écrire de méta-commentaire sur ta propre narration ("le chapitre se termine sur...", "la scène s'ouvre sur...", "le récit suit...")
+- Ne jamais résumer ce qui vient de se passer au lieu de le montrer
+- Ne jamais faire parler un personnage pour expliquer l'intrigue au lecteur (dialogue d'exposition)
+- Respecter scrupuleusement la technologie et l'époque de l'univers (ex: monde médiéval-fantastique = pas d'armes à feu, pas de technologie moderne)
+- Ne pas introduire de personnages ou lieux qui ne sont pas dans le lorebook ou la fiche
 
 Réponds UNIQUEMENT avec le texte du chapitre, rien d'autre.
 Commence directement par le titre du chapitre sur la première ligne (ex: # Titre),

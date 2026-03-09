@@ -11,11 +11,11 @@ logger = logging.getLogger(__name__)
 
 # Grille d'évaluation par défaut — surchargeable via ctx.extra["critic_grid"]
 DEFAULT_CRITIC_GRID = """
-1. **Cohérence avec le lorebook** (0-10) : Les personnages, lieux et règles du monde sont-ils respectés ?
-2. **Respect de la fiche chapitre** (0-10) : Le contenu prévu a-t-il bien été couvert ?
-3. **Qualité narrative** (0-10) : Style, rythme, "show don't tell", qualité des dialogues.
-4. **Continuité** (0-10) : Le chapitre s'enchaîne-t-il bien avec le précédent ?
-5. **Engagement** (0-10) : Le chapitre donne-t-il envie de lire la suite ?
+1. **Cohérence avec le lorebook** (0-10) : Les personnages, lieux et règles du monde sont-ils respectés ? Pénalise les anachronismes (ex: armes à feu en monde médiéval, technologie moderne en fantasy).
+2. **Respect de la fiche chapitre** (0-10) : Le contenu prévu a-t-il bien été couvert ? Les scènes d'ouverture et de fermeture sont-elles présentes ?
+3. **Qualité narrative** (0-10) : Style, rythme, "show don't tell". Pénalise : répétitions de formules, méta-commentaires sur la narration, dialogues d'exposition, longueur inférieure à 1200 mots.
+4. **Continuité** (0-10) : Le chapitre s'enchaîne-t-il bien avec le précédent ? Les cliffhangers précédents sont-ils résolus ?
+5. **Engagement** (0-10) : Le chapitre donne-t-il envie de lire la suite ? La tension monte-t-elle ?
 """
 
 SYSTEM_PROMPT = """Tu es un éditeur littéraire expérimenté et exigeant. Tu évalues un chapitre
