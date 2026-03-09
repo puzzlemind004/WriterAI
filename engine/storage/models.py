@@ -45,8 +45,11 @@ class Project(Base):
     def llm_api_key(self, value: str | None) -> None:
         self._llm_api_key_encrypted = encrypt(value) if value else None
 
+    # Texte source (pitch ou synopsis)
+    source_text = Column(Text, nullable=True)
+
     # Configuration narrative
-    target_chapter_count = Column(Integer, default=10)
+    target_chapter_count = Column(Integer, nullable=True)
     writing_style = Column(Text, nullable=True)       # Règles d'écriture
     tone_keywords = Column(JSON, default=list)         # ["sombre", "épique", ...]
     language = Column(String, default="fr")

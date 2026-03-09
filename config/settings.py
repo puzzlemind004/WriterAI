@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     min_validation_score: float = Field(default=7.0, ge=0.0, le=10.0)
     max_revision_attempts: int = Field(default=5, ge=1, le=50)
 
+    # CORS
+    cors_origins: list[str] = ["http://localhost:5173", "http://localhost:4200"]
+
     # Redis (for Celery task queue)
     redis_url: str = "redis://localhost:6379/0"
 

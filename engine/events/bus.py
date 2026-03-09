@@ -34,6 +34,12 @@ class EventBus:
             if handler in self._handlers[event_type]:
                 self._handlers[event_type].remove(handler)
 
+    def unsubscribe_all(self, handler: Handler) -> None:
+        """Désabonne un handler global ajouté via subscribe_all."""
+        with self._lock:
+            if handler in self._global_handlers:
+                self._global_handlers.remove(handler)
+
     def emit(self, event: Event) -> None:
         """Émet un événement vers tous les handlers abonnés."""
         logger.debug(f"Event [{event.type}] project={event.project_id} chapter={event.chapter_id}")
