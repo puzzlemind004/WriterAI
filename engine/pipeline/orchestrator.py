@@ -29,6 +29,7 @@ from engine.events.types import Event, EventType
 from engine.llm.client import LLMClient
 from engine.pipeline.states import ChapterState, validate_transition, InvalidTransitionError
 from engine.storage.file_manager import FileManager
+from engine.storage.db_sync import SyncDBPersister
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class OrchestratorConfig:
     min_validation_score: float = 7.0
     max_revision_attempts: int = 5
     critic_grid: Optional[str] = None  # Grille personnalisée, None = grille par défaut
+    event_loop: Optional[object] = None  # asyncio loop pour la persistance DB
 
 
 class PipelineError(Exception):
@@ -72,6 +74,12 @@ class Orchestrator:
     def __init__(self, config: OrchestratorConfig):
         self.config = config
         self.chapters: list[ChapterStatus] = []
+
+        # Persister DB (None si pas de loop fournie — mode test sans DB)
+        self._db: Optional[SyncDBPersister] = (
+            SyncDBPersister(config.project_id, config.event_loop)
+            if config.event_loop else None
+        )
 
         # Instanciation des agents (stateless — réutilisables)
         self._analyzer = AnalyzerAgent()
@@ -158,6 +166,14 @@ class Orchestrator:
         self.chapters = [ChapterStatus(number=i + 1) for i in range(nb_chapitres)]
         logger.info(f"[orchestrator] {nb_chapitres} chapitre(s) planifié(s)")
 
+        # Persistance DB : crée les lignes Chapter avec état "planned"
+        if self._db:
+            fm = FileManager(self.config.project_id)
+            for i in range(nb_chapitres):
+                n = i + 1
+                brief_path = str(fm.root / "briefs" / f"chapitre_{n:02d}.md")
+                self._db.upsert_chapter(number=n, state="planned", brief_path=brief_path)
+
     # ------------------------------------------------------------------ #
     #  Phase 2 : Pipeline par chapitre                                     #
     # ------------------------------------------------------------------ #
@@ -175,9 +191,13 @@ class Orchestrator:
 
         # Première rédaction
         self._transition(chapter, ChapterState.WRITING)
+        if self._db:
+            self._db.update_chapter(number=n, state="writing")
         writer_result = self._write_chapter(n, world_state)
         if not writer_result.success:
             self._transition(chapter, ChapterState.ERROR)
+            if self._db:
+                self._db.update_chapter(number=n, state="error")
             logger.error(f"[orchestrator] Chapitre {n} — rédaction échouée, passage en ERROR")
             return
 
@@ -228,6 +248,28 @@ class Orchestrator:
         # Chapitre validé — mise à jour du lorebook sur la version finale
         self._update_lorebook(n, writer_result)
         self._transition(chapter, ChapterState.VALIDATED)
+
+        # Persistance DB : état final + score + chemin du fichier + titre
+        if self._db:
+            fm = FileManager(self.config.project_id)
+            content_path = str(fm.root / "chapitres" / f"chapitre_{n:02d}.md")
+            # Extrait le titre depuis la première ligne du fichier
+            title = None
+            try:
+                content = fm.read_chapter(n)
+                lines = content.splitlines()
+                if lines and lines[0].startswith("#"):
+                    title = lines[0].lstrip("#").strip()
+            except Exception:
+                pass
+            self._db.update_chapter(
+                number=n,
+                state="validated",
+                content_path=content_path,
+                score=chapter.last_score,
+                revision_count=chapter.revision_count,
+                title=title,
+            )
         logger.info(f"[orchestrator] Chapitre {n} — validé (score={chapter.last_score}, révisions={chapter.revision_count})")
 
     # ------------------------------------------------------------------ #

@@ -1,22 +1,19 @@
 """
 Routes pour lire le contenu généré : chapitres et lorebook.
+Les métadonnées viennent de la DB, le contenu narratif des fichiers markdown.
 """
 import logging
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+
+from api.dependencies import db_session
 from api.schemas import ChapterResponse, LorebookResponse
 from engine.storage.file_manager import FileManager
+from engine.storage.models import Chapter, Project
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["content"])
-
-
-def _extract_title(content: str, chapter_number: int) -> str | None:
-    if not content:
-        return None
-    lines = content.splitlines()
-    if lines and lines[0].startswith("#"):
-        return lines[0].lstrip("#").strip()
-    return None
 
 
 def _get_file_manager(project_id: str) -> FileManager:
@@ -27,65 +24,110 @@ def _get_file_manager(project_id: str) -> FileManager:
         raise HTTPException(status_code=404, detail="Projet introuvable ou inaccessible")
 
 
+def _extract_title(content: str) -> str | None:
+    if not content:
+        return None
+    lines = content.splitlines()
+    if lines and lines[0].startswith("#"):
+        return lines[0].lstrip("#").strip()
+    return None
+
+
 @router.get("/{project_id}/chapters", response_model=list[ChapterResponse])
-async def list_chapters(project_id: str):
+async def list_chapters(
+    project_id: str,
+    session: AsyncSession = Depends(db_session),
+):
+    # Vérifie que le projet existe
+    project = await session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+
+    # Récupère les chapitres depuis la DB
+    result = await session.execute(
+        select(Chapter)
+        .where(Chapter.project_id == project_id)
+        .order_by(Chapter.number)
+    )
+    db_chapters = result.scalars().all()
+
+    if not db_chapters:
+        # Fallback : lecture des fichiers markdown si la DB est vide (migration, test e2e ancien)
+        return _list_chapters_from_files(project_id)
+
     fm = _get_file_manager(project_id)
-    result = []
-    chapter_num = 1
-
-    try:
-        while True:
-            content = fm.read_chapter(chapter_num)
-            brief = fm.read_chapter_brief(chapter_num)
-            if not content and not brief:
-                break
-            result.append(ChapterResponse(
-                number=chapter_num,
-                title=_extract_title(content, chapter_num),
-                state="validated" if content else "planned",
-                content=content or None,
-                score=None,
-                revision_count=0,
-            ))
-            chapter_num += 1
-    except Exception as e:
-        logger.error(f"Erreur lecture chapitres projet {project_id} : {e}")
-        raise HTTPException(status_code=500, detail="Erreur lors de la lecture des chapitres")
-
-    return result
+    chapters = []
+    for ch in db_chapters:
+        content = fm.read_chapter(ch.number) if ch.content_path else None
+        title = ch.title or _extract_title(content or "")
+        chapters.append(ChapterResponse(
+            number=ch.number,
+            title=title,
+            state=ch.state,
+            content=content or None,
+            score=ch.last_score,
+            revision_count=ch.revision_count,
+        ))
+    return chapters
 
 
 @router.get("/{project_id}/chapters/{number}", response_model=ChapterResponse)
 async def get_chapter(
     project_id: str,
     number: int = Path(ge=1, description="Numéro du chapitre (>= 1)"),
+    session: AsyncSession = Depends(db_session),
 ):
-    fm = _get_file_manager(project_id)
+    project = await session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
 
-    try:
+    result = await session.execute(
+        select(Chapter).where(
+            Chapter.project_id == project_id,
+            Chapter.number == number,
+        )
+    )
+    ch = result.scalar_one_or_none()
+
+    if ch is None:
+        # Fallback fichiers
+        fm = _get_file_manager(project_id)
         content = fm.read_chapter(number)
         brief = fm.read_chapter_brief(number)
-    except Exception as e:
-        logger.error(f"Erreur lecture chapitre {number} projet {project_id} : {e}")
-        raise HTTPException(status_code=500, detail="Erreur lors de la lecture du chapitre")
+        if not content and not brief:
+            raise HTTPException(status_code=404, detail=f"Chapitre {number} introuvable")
+        return ChapterResponse(
+            number=number,
+            title=_extract_title(content),
+            state="validated" if content else "planned",
+            content=content or None,
+            score=None,
+            revision_count=0,
+        )
 
-    if not content and not brief:
-        raise HTTPException(status_code=404, detail=f"Chapitre {number} introuvable")
-
+    fm = _get_file_manager(project_id)
+    content = fm.read_chapter(number) if ch.content_path else None
+    title = ch.title or _extract_title(content or "")
     return ChapterResponse(
         number=number,
-        title=_extract_title(content, number),
-        state="validated" if content else "planned",
+        title=title,
+        state=ch.state,
         content=content or None,
-        score=None,
-        revision_count=0,
+        score=ch.last_score,
+        revision_count=ch.revision_count,
     )
 
 
 @router.get("/{project_id}/lorebook", response_model=LorebookResponse)
-async def get_lorebook(project_id: str):
-    fm = _get_file_manager(project_id)
+async def get_lorebook(
+    project_id: str,
+    session: AsyncSession = Depends(db_session),
+):
+    project = await session.get(Project, project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
 
+    fm = _get_file_manager(project_id)
     try:
         characters = fm.read_all_characters()
         places = fm.read_all_places()
@@ -94,18 +136,39 @@ async def get_lorebook(project_id: str):
         logger.error(f"Erreur lecture lorebook projet {project_id} : {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la lecture du lorebook")
 
-    return LorebookResponse(
-        characters=characters,
-        places=places,
-        lore=lore,
-    )
+    return LorebookResponse(characters=characters, places=places, lore=lore)
 
 
 def _read_all_lore(fm: FileManager) -> dict[str, str]:
     entities = fm.list_lorebook_entities("lore")
-    result = {}
-    for name in entities:
-        content = fm.read_lorebook_file(f"lore/{name}.md")
-        if content:
-            result[name] = content
-    return result
+    return {
+        name: content
+        for name in entities
+        if (content := fm.read_lorebook_file(f"lore/{name}.md"))
+    }
+
+
+def _list_chapters_from_files(project_id: str) -> list[ChapterResponse]:
+    """Fallback : construit la liste des chapitres depuis les fichiers markdown."""
+    try:
+        fm = FileManager(project_id)
+        result = []
+        chapter_num = 1
+        while True:
+            content = fm.read_chapter(chapter_num)
+            brief = fm.read_chapter_brief(chapter_num)
+            if not content and not brief:
+                break
+            result.append(ChapterResponse(
+                number=chapter_num,
+                title=_extract_title(content),
+                state="validated" if content else "planned",
+                content=content or None,
+                score=None,
+                revision_count=0,
+            ))
+            chapter_num += 1
+        return result
+    except Exception as e:
+        logger.error(f"Fallback lecture chapitres {project_id} : {e}")
+        return []

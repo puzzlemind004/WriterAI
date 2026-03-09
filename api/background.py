@@ -81,6 +81,8 @@ async def run_pipeline_async(project_id: str, config) -> None:
 
     try:
         def _run() -> dict:
+            # Injecte la loop asyncio pour que l'orchestrateur puisse persister en DB
+            config.event_loop = loop
             orchestrator = Orchestrator(config)
             return orchestrator.run()
 
