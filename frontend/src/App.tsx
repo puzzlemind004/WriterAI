@@ -1,12 +1,18 @@
 import { Routes, Route } from 'react-router-dom'
+import { AuthProvider } from './auth/AuthContext'
+import RequireAuth from './auth/RequireAuth'
+import LoginPage from './pages/LoginPage'
 import ProjectsPage from './pages/ProjectsPage'
 import ProjectPage from './pages/ProjectPage'
 
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<ProjectsPage />} />
-      <Route path="/projects/:id" element={<ProjectPage />} />
-    </Routes>
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/" element={<RequireAuth><ProjectsPage /></RequireAuth>} />
+        <Route path="/projects/:id" element={<RequireAuth><ProjectPage /></RequireAuth>} />
+      </Routes>
+    </AuthProvider>
   )
 }

@@ -16,6 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from engine.storage.database import init_db
 from api.routers import projects, pipeline, content
+from api.auth.router import router as auth_router
 from config.settings import settings
 
 logging.basicConfig(
@@ -50,6 +51,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth_router)
 app.include_router(projects.router)
 app.include_router(pipeline.router)
 app.include_router(content.router)

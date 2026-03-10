@@ -27,8 +27,28 @@ class Settings(BaseSettings):
     # Chiffrement des clés API (Fernet)
     writerai_secret_key: Optional[str] = None
 
+    # JWT
+    jwt_secret_key: str = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 30
+    cookie_secure: bool = False  # True en prod (HTTPS)
+
     # Logging
     log_level: str = Field(default="INFO", pattern="^(DEBUG|INFO|WARNING|ERROR|CRITICAL)$")
+
+    @field_validator("jwt_secret_key")
+    @classmethod
+    def validate_jwt_secret(cls, v: str) -> str:
+        if v == "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING":
+            import warnings
+            warnings.warn(
+                "JWT_SECRET_KEY utilise la valeur par défaut — définissez JWT_SECRET_KEY dans .env",
+                stacklevel=2,
+            )
+        if len(v) < 32:
+            raise ValueError("JWT_SECRET_KEY doit faire au moins 32 caractères")
+        return v
 
     @field_validator("database_url")
     @classmethod

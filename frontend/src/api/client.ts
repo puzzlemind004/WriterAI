@@ -1,15 +1,78 @@
 const BASE = '/api'
 
+// --- Token management ---
+
+let _accessToken: string | null = localStorage.getItem('access_token')
+let _onUnauthenticated: (() => void) | null = null
+let _refreshPromise: Promise<boolean> | null = null
+
+export function setOnUnauthenticated(cb: () => void) {
+  _onUnauthenticated = cb
+}
+
+export function setAccessToken(token: string | null) {
+  _accessToken = token
+  if (token) localStorage.setItem('access_token', token)
+  else localStorage.removeItem('access_token')
+}
+
+export function getAccessToken() {
+  return _accessToken
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
-    ...options,
-  })
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string> ?? {}),
+  }
+  if (_accessToken) {
+    headers['Authorization'] = `Bearer ${_accessToken}`
+  }
+
+  const res = await fetch(`${BASE}${path}`, { ...options, headers })
+
+  // Auto-refresh on 401
+  if (res.status === 401 && path !== '/auth/refresh' && path !== '/auth/login') {
+    // Déduplique les refreshs concurrents
+    if (!_refreshPromise) {
+      _refreshPromise = tryRefresh().finally(() => { _refreshPromise = null })
+    }
+    const refreshed = await _refreshPromise
+    if (refreshed) {
+      headers['Authorization'] = `Bearer ${_accessToken}`
+      const retry = await fetch(`${BASE}${path}`, { ...options, headers })
+      if (!retry.ok) {
+        const err = await retry.json().catch(() => ({ detail: retry.statusText }))
+        throw new Error(err.detail ?? retry.statusText)
+      }
+      return retry.status === 204 ? (undefined as T) : retry.json()
+    } else {
+      setAccessToken(null)
+      _onUnauthenticated?.()
+      throw new Error('Session expirée')
+    }
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail ?? res.statusText)
   }
-  return res.json()
+  return res.status === 204 ? (undefined as T) : res.json()
+}
+
+async function tryRefresh(): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/auth/refresh`, {
+      method: 'POST',
+      credentials: 'include',
+    })
+    if (!res.ok) return false
+    const data = await res.json()
+    setAccessToken(data.access_token)
+    return true
+  } catch {
+    return false
+  }
 }
 
 // --- Types (alignés sur api/schemas.py) ---
@@ -75,9 +138,45 @@ export interface LorebookResponse {
   lore: Record<string, string>
 }
 
+export interface UserResponse {
+  id: string
+  email: string
+  created_at: string
+  is_active: boolean
+}
+
 // --- API calls ---
 
 export const api = {
+  auth: {
+    register: (email: string, password: string) =>
+      request<UserResponse>('/auth/register', {
+        method: 'POST',
+        body: JSON.stringify({ email, password }),
+      }),
+    login: async (email: string, password: string) => {
+      const data = await request<{ access_token: string }>('/auth/login', {
+        method: 'POST',
+        credentials: 'include',
+        body: JSON.stringify({ email, password }),
+      })
+      setAccessToken(data.access_token)
+      return data
+    },
+    logout: async () => {
+      try {
+        await fetch(`${BASE}/auth/logout`, {
+          method: 'POST',
+          credentials: 'include',
+          headers: { Authorization: `Bearer ${_accessToken ?? ''}` },
+        })
+      } finally {
+        setAccessToken(null)
+      }
+    },
+    me: () => request<UserResponse>('/auth/me'),
+  },
+
   projects: {
     list: () => request<Project[]>('/projects'),
     get: (id: string) => request<Project>(`/projects/${id}`),
