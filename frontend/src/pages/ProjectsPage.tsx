@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Plus, BookOpen, Trash2, Loader2 } from 'lucide-react'
+import { Plus, BookOpen, Trash2, Loader2, LogOut } from 'lucide-react'
 import { api, type ProjectCreateRequest } from '../api/client'
+import { useAuth } from '../auth/AuthContext'
 
 const DEFAULT_LLM = {
   provider: 'ollama',
@@ -149,6 +150,12 @@ export default function ProjectsPage() {
   const [showModal, setShowModal] = useState(false)
   const navigate = useNavigate()
   const qc = useQueryClient()
+  const { user, logout } = useAuth()
+
+  async function handleLogout() {
+    await logout()
+    navigate('/login')
+  }
 
   const { data: projects, isLoading } = useQuery({
     queryKey: ['projects'],
@@ -168,13 +175,23 @@ export default function ProjectsPage() {
             <h1 className="text-3xl font-bold text-white">WriterAI</h1>
             <p className="text-slate-400 mt-1">Vos romans générés par IA</p>
           </div>
-          <button
-            onClick={() => setShowModal(true)}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-            Nouveau projet
-          </button>
+          <div className="flex items-center gap-3">
+            {user && <span className="text-sm text-slate-500">{user.email}</span>}
+            <button
+              onClick={handleLogout}
+              title="Déconnexion"
+              className="p-2 text-slate-500 hover:text-slate-300 transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setShowModal(true)}
+              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+            >
+              <Plus className="w-5 h-5" />
+              Nouveau projet
+            </button>
+          </div>
         </div>
 
         {isLoading ? (

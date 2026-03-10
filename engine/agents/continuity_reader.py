@@ -62,9 +62,17 @@ class ContinuityReaderAgent(BaseAgent):
                 data={"world_state": None},
             )
 
+        # Limite à 3000 mots max pour éviter de surcharger le contexte sur les longs chapitres
+        words = previous_chapter.split()
+        if len(words) > 3000:
+            truncated = ' '.join(words[:500]) + '\n\n[...]\n\n' + ' '.join(words[-2500:])
+            chapter_excerpt = f"[Chapitre tronqué — début et fin]\n\n{truncated}"
+        else:
+            chapter_excerpt = previous_chapter
+
         user_prompt = f"""Voici le chapitre {chapter_number - 1} :
 
-{previous_chapter}
+{chapter_excerpt}
 
 ---
 Extrais l'état du monde à la fin de ce chapitre."""

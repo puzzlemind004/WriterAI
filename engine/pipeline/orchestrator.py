@@ -344,7 +344,9 @@ class Orchestrator:
                     "evolutions": extractor_result.data.get("evolutions", []),
                 },
             )
-            self._lore_keeper.run(keeper_ctx)
+            keeper_result = self._lore_keeper.run(keeper_ctx)
+            if keeper_result.success:
+                self._emit(EventType.LOREBOOK_UPDATED, {"chapter_number": chapter_number})
         else:
             logger.warning(f"[orchestrator] Chapitre {chapter_number} — LoreExtractor échoué, lorebook non mis à jour")
 

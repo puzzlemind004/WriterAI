@@ -4,7 +4,10 @@ Représente tout ce qui est stocké en base (états, metadata, logs).
 Le contenu narratif (lorebook, chapitres) reste en fichiers markdown.
 """
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
+
+def _utcnow():
+    return datetime.now(timezone.utc)
 from sqlalchemy import (
     Column, String, Float, Integer, DateTime, Text,
     ForeignKey, JSON, Boolean
@@ -21,13 +24,40 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    email = Column(String, nullable=False, unique=True, index=True)
+    hashed_password = Column(String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    is_active = Column(Boolean, default=True)
+
+    projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
+    refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+
+
+class RefreshToken(Base):
+    __tablename__ = "refresh_tokens"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    token_hash = Column(String, nullable=False, unique=True)  # SHA-256 du token brut
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    revoked = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    user_agent = Column(String, nullable=True)
+
+    user = relationship("User", back_populates="refresh_tokens")
+
+
 class Project(Base):
     __tablename__ = "projects"
 
     id = Column(String, primary_key=True, default=_uuid)
     name = Column(String, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     # Configuration LLM du projet
     llm_provider = Column(String, nullable=False)
@@ -62,9 +92,13 @@ class Project(Base):
     # Chemin vers le dossier du projet (lorebook + chapitres)
     project_dir = Column(String, nullable=False)
 
+    # Propriétaire (nullable pendant la migration, NOT NULL ensuite)
+    owner_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+
     # Relations
-    chapters = relationship("Chapter", back_populates="project", cascade="all, delete-orphan")
-    agent_logs = relationship("AgentLog", back_populates="project", cascade="all, delete-orphan")
+    owner = relationship("User", back_populates="projects")
+    chapters = relationship("Chapter", back_populates="project", cascade="all, delete-orphan", lazy="selectin")
+    agent_logs = relationship("AgentLog", back_populates="project", cascade="all, delete-orphan", lazy="selectin")
 
 
 class Chapter(Base):
@@ -91,12 +125,12 @@ class Chapter(Base):
     # Contrôle utilisateur
     is_user_controlled = Column(Boolean, default=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     # Relations
     project = relationship("Project", back_populates="chapters")
-    state_history = relationship("ChapterStateHistory", back_populates="chapter", cascade="all, delete-orphan")
+    state_history = relationship("ChapterStateHistory", back_populates="chapter", cascade="all, delete-orphan", lazy="selectin")
 
 
 class ChapterStateHistory(Base):
@@ -109,7 +143,7 @@ class ChapterStateHistory(Base):
     new_state = Column(String, nullable=False)
     changed_by = Column(String, nullable=False)   # agent_name ou "user"
     note = Column(Text, nullable=True)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), default=_utcnow)
 
     chapter = relationship("Chapter", back_populates="state_history")
 
@@ -132,8 +166,8 @@ class AgentLog(Base):
     cost_usd = Column(Float, nullable=True)
     duration_seconds = Column(Float, nullable=True)
 
-    started_at = Column(DateTime, default=datetime.utcnow)
-    completed_at = Column(DateTime, nullable=True)
+    started_at = Column(DateTime(timezone=True), default=_utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
 
     project = relationship("Project", back_populates="agent_logs")
 
@@ -152,6 +186,6 @@ class LorebookEntry(Base):
     entity_name = Column(String, nullable=False)
     file_path = Column(String, nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
     last_modified_by = Column(String, nullable=True)   # agent_name ou "user"

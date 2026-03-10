@@ -10,10 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.dependencies import db_session
+from api.dependencies import db_session, get_current_user
 from api.schemas import PipelineStatus
 from api import background
-from engine.storage.models import Project
+from engine.storage.models import Project, User
 from engine.events.bus import bus
 from engine.events.types import Event
 
@@ -56,12 +56,13 @@ def _build_orchestrator_config(project: Project, source_text: str):
 async def run_pipeline(
     project_id: str,
     session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
 ):
     if background.is_running(project_id):
         raise HTTPException(status_code=409, detail="Pipeline déjà en cours")
 
     project = await session.get(Project, project_id)
-    if not project:
+    if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Projet introuvable")
 
     source_text = getattr(project, "source_text", "")
@@ -146,7 +147,7 @@ async def stream_events(project_id: str):
                     yield f"data: {json.dumps(event_data)}\n\n"
 
                     # Arrête le stream si le pipeline est terminé
-                    if event_data["type"] in ("pipeline_completed", "pipeline_error"):
+                    if event_data["type"] in ("pipeline.completed", "pipeline.error"):
                         break
 
                 except asyncio.TimeoutError:

@@ -3,123 +3,161 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   ArrowLeft, Play, Square, Loader2, BookOpen,
-  Users, MapPin, Scroll, ChevronDown, ChevronUp
+  Users, MapPin, Scroll, ChevronDown, ChevronUp,
+  CheckCircle, Clock, PenLine, AlertCircle, Eye,
 } from 'lucide-react'
-import { api, type PipelineStatus, type ChapterResponse } from '../api/client'
+import { api, type ChapterResponse } from '../api/client'
 
-// --- Pipeline status bar ---
+// --- SSE hook — géré au niveau page, partage les invalidations ---
+
+function useSSE(projectId: string, isRunning: boolean) {
+  const qc = useQueryClient()
+  const esRef = useRef<EventSource | null>(null)
+
+  function connect() {
+    if (esRef.current) esRef.current.close()
+    const es = new EventSource(`/api/projects/${projectId}/stream`)
+    esRef.current = es
+
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        handleEvent(data)
+      } catch { /* ignore malformed */ }
+    }
+
+    es.onerror = () => {
+      es.close()
+      esRef.current = null
+    }
+
+    function handleEvent(data: { type: string; payload?: Record<string, unknown> }) {
+      switch (data.type) {
+        case 'agent.started':
+        case 'agent.completed':
+        case 'agent.failed':
+          qc.invalidateQueries({ queryKey: ['pipeline', projectId] })
+          break
+
+        case 'chapter.state_changed':
+          // Invalide à chaque changement d'état, pas seulement sur validated
+          qc.invalidateQueries({ queryKey: ['chapters', projectId] })
+          // Si validé, invalider aussi le projet (compteur chapters_done)
+          if (data.payload?.new_state === 'validated') {
+            qc.invalidateQueries({ queryKey: ['project', projectId] })
+            qc.invalidateQueries({ queryKey: ['projects'] })
+          }
+          break
+
+        case 'lorebook.updated':
+          qc.invalidateQueries({ queryKey: ['lorebook', projectId] })
+          break
+
+        case 'pipeline.completed':
+          qc.invalidateQueries({ queryKey: ['pipeline', projectId] })
+          qc.invalidateQueries({ queryKey: ['chapters', projectId] })
+          qc.invalidateQueries({ queryKey: ['lorebook', projectId] })
+          qc.invalidateQueries({ queryKey: ['project', projectId] })
+          qc.invalidateQueries({ queryKey: ['projects'] })
+          es.close()
+          esRef.current = null
+          break
+
+        case 'pipeline.error':
+          qc.invalidateQueries({ queryKey: ['pipeline', projectId] })
+          qc.invalidateQueries({ queryKey: ['chapters', projectId] })
+          es.close()
+          esRef.current = null
+          break
+      }
+    }
+  }
+
+  useEffect(() => {
+    if (isRunning) connect()
+    return () => { esRef.current?.close() }
+  }, [isRunning])
+
+  return { connect }
+}
+
+// --- Pipeline bar ---
 
 function PipelineBar({ projectId }: { projectId: string }) {
   const qc = useQueryClient()
-  const [isStreaming, setIsStreaming] = useState(false)
-  const esRef = useRef<EventSource | null>(null)
 
-  const { data: status, refetch } = useQuery({
+  const { data: status } = useQuery({
     queryKey: ['pipeline', projectId],
     queryFn: () => api.pipeline.status(projectId),
-    refetchInterval: isStreaming ? false : 5000,
+    // Pas de polling — SSE gère les mises à jour en temps réel
+    // Seul un refetch au montage pour avoir l'état initial
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   })
+
+  const isRunning = status?.status === 'running' || status?.status === 'stopping'
+
+  const { connect } = useSSE(projectId, isRunning)
 
   const run = useMutation({
     mutationFn: () => api.pipeline.run(projectId),
-    onSuccess: () => {
-      refetch()
-      startStream()
+    onSuccess: (data) => {
+      qc.setQueryData(['pipeline', projectId], data)
+      connect() // Ouvre le SSE dès le lancement
     },
   })
 
   const stop = useMutation({
     mutationFn: () => api.pipeline.stop(projectId),
-    onSuccess: () => refetch(),
+    onSuccess: (data) => qc.setQueryData(['pipeline', projectId], data),
   })
-
-  function startStream() {
-    if (esRef.current) esRef.current.close()
-    setIsStreaming(true)
-    const es = new EventSource(`/api/projects/${projectId}/stream`)
-    esRef.current = es
-
-    es.onmessage = (e) => {
-      const data = JSON.parse(e.data)
-      if (data.type === 'agent_started') {
-        qc.setQueryData(['pipeline', projectId], (prev: PipelineStatus | undefined) =>
-          prev ? { ...prev, current_agent: data.payload?.agent, status: 'running' } : prev
-        )
-      } else if (data.type === 'agent_completed') {
-        qc.setQueryData(['pipeline', projectId], (prev: PipelineStatus | undefined) =>
-          prev ? { ...prev, current_agent: null } : prev
-        )
-      } else if (data.type === 'chapter_state_changed' && data.payload?.new_state === 'validated') {
-        // Un chapitre vient d'être validé : rafraîchit la liste en temps réel
-        qc.invalidateQueries({ queryKey: ['chapters', projectId] })
-      } else if (data.type === 'pipeline_completed') {
-        es.close()
-        setIsStreaming(false)
-        refetch()
-        qc.invalidateQueries({ queryKey: ['chapters', projectId] })
-        qc.invalidateQueries({ queryKey: ['projects'] })
-      } else if (data.type === 'pipeline_error') {
-        es.close()
-        setIsStreaming(false)
-        refetch()
-      }
-    }
-
-    es.onerror = () => {
-      es.close()
-      setIsStreaming(false)
-      refetch()
-    }
-  }
-
-  useEffect(() => {
-    if (status?.status === 'running') startStream()
-    return () => esRef.current?.close()
-  }, [])
 
   if (!status) return null
 
-  const isRunning = status.status === 'running'
-  const isIdle = status.status === 'idle'
+  const statusConfig: Record<string, { label: string; color: string; dot: string }> = {
+    idle:      { label: 'En attente',   color: 'text-slate-400', dot: 'bg-slate-600' },
+    running:   { label: 'En cours…',    color: 'text-yellow-400', dot: 'bg-yellow-400 animate-pulse' },
+    stopping:  { label: 'Arrêt…',       color: 'text-orange-400', dot: 'bg-orange-400 animate-pulse' },
+    completed: { label: 'Terminé',      color: 'text-green-400',  dot: 'bg-green-400' },
+    error:     { label: 'Erreur',        color: 'text-red-400',   dot: 'bg-red-400' },
+  }
+  const cfg = statusConfig[status.status] ?? statusConfig.idle
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6">
       <div className="flex items-center gap-4">
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-1">
-            <span className="text-sm font-medium text-slate-300">Pipeline</span>
-            <StatusDot status={status.status} />
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${cfg.dot}`} />
+            <span className={`text-sm font-medium ${cfg.color}`}>{cfg.label}</span>
+            {isRunning && status.current_agent && (
+              <span className="text-xs text-slate-500 truncate">
+                — <Loader2 className="inline w-3 h-3 animate-spin mr-1" />{status.current_agent}
+              </span>
+            )}
           </div>
-          {isRunning && status.current_agent && (
-            <p className="text-xs text-slate-500">
-              <Loader2 className="inline w-3 h-3 animate-spin mr-1" />
-              {status.current_agent}
-            </p>
-          )}
-          {status.status === 'error' && (
-            <p className="text-xs text-red-400 truncate">{status.error}</p>
-          )}
-          {status.status === 'completed' && (
-            <p className="text-xs text-green-400">Génération terminée</p>
+          {status.status === 'error' && status.error && (
+            <p className="text-xs text-red-400 mt-1 truncate">{status.error}</p>
           )}
         </div>
 
-        {isIdle || status.status === 'completed' || status.status === 'error' ? (
-          <button
-            onClick={() => run.mutate()}
-            disabled={run.isPending}
-            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
-          >
-            {run.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-            {status.status === 'completed' ? 'Relancer' : 'Lancer'}
-          </button>
-        ) : (
+        {isRunning ? (
           <button
             onClick={() => stop.mutate()}
-            className="flex items-center gap-2 bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+            disabled={stop.isPending || status.status === 'stopping'}
+            className="flex items-center gap-2 bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-shrink-0"
           >
             <Square className="w-4 h-4" />
             Arrêter
+          </button>
+        ) : (
+          <button
+            onClick={() => run.mutate()}
+            disabled={run.isPending}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors flex-shrink-0"
+          >
+            {run.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+            {status.status === 'completed' ? 'Relancer' : 'Lancer'}
           </button>
         )}
       </div>
@@ -127,47 +165,60 @@ function PipelineBar({ projectId }: { projectId: string }) {
   )
 }
 
-function StatusDot({ status }: { status: string }) {
-  const styles: Record<string, string> = {
-    idle: 'bg-slate-600',
-    running: 'bg-yellow-400 animate-pulse',
-    completed: 'bg-green-400',
-    error: 'bg-red-400',
-  }
-  return <span className={`inline-block w-2 h-2 rounded-full ${styles[status] ?? styles.idle}`} />
-}
+// --- Chapter item ---
 
-// --- Chapter list ---
+const STATE_CONFIG: Record<string, { label: string; color: string; Icon: React.FC<{ className?: string }> }> = {
+  planned:           { label: 'Planifié',    color: 'text-slate-400 bg-slate-800',          Icon: Clock },
+  writing:           { label: 'Rédaction…',  color: 'text-yellow-400 bg-yellow-900/30',     Icon: PenLine },
+  in_review:         { label: 'Révision…',   color: 'text-blue-400 bg-blue-900/30',         Icon: Eye },
+  revision_requested:{ label: 'Correction',  color: 'text-orange-400 bg-orange-900/30',     Icon: AlertCircle },
+  validated:         { label: 'Rédigé',      color: 'text-green-400 bg-green-900/30',       Icon: CheckCircle },
+  error:             { label: 'Erreur',      color: 'text-red-400 bg-red-900/30',           Icon: AlertCircle },
+}
 
 function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
   const [open, setOpen] = useState(false)
+  const cfg = STATE_CONFIG[chapter.state] ?? STATE_CONFIG.planned
+  const hasContent = !!chapter.content
+
   return (
     <div className="border border-slate-800 rounded-lg overflow-hidden">
       <button
         className="w-full flex items-center justify-between p-4 hover:bg-slate-800/50 transition-colors text-left"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => hasContent && setOpen(o => !o)}
+        style={{ cursor: hasContent ? 'pointer' : 'default' }}
       >
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-mono text-slate-600 w-6">{chapter.number}</span>
-          <span className="text-sm font-medium text-white">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-xs font-mono text-slate-600 w-6 flex-shrink-0">
+            {chapter.number}
+          </span>
+          <span className="text-sm font-medium text-white truncate">
             {chapter.title ?? `Chapitre ${chapter.number}`}
           </span>
-          <span className={`text-xs px-2 py-0.5 rounded-full ${
-            chapter.state === 'validated'
-              ? 'bg-green-900/50 text-green-400'
-              : 'bg-slate-800 text-slate-500'
-          }`}>
-            {chapter.state === 'validated' ? 'Rédigé' : 'Planifié'}
+          <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full flex-shrink-0 ${cfg.color}`}>
+            <cfg.Icon className="w-3 h-3" />
+            {cfg.label}
           </span>
+          {chapter.score != null && (
+            <span className="text-xs text-slate-600 flex-shrink-0">{chapter.score.toFixed(1)}/10</span>
+          )}
         </div>
-        {open ? <ChevronUp className="w-4 h-4 text-slate-600" /> : <ChevronDown className="w-4 h-4 text-slate-600" />}
+        {hasContent && (
+          open
+            ? <ChevronUp className="w-4 h-4 text-slate-600 flex-shrink-0" />
+            : <ChevronDown className="w-4 h-4 text-slate-600 flex-shrink-0" />
+        )}
       </button>
-      {open && chapter.content && (
-        <div className="px-4 pb-4 border-t border-slate-800">
-          <div className="mt-4 prose prose-invert prose-sm max-w-none">
-            <div className="text-slate-300 leading-relaxed whitespace-pre-wrap text-sm">
-              {chapter.content}
-            </div>
+
+      {open && hasContent && (
+        <div className="border-t border-slate-800 px-6 py-5">
+          {chapter.revision_count > 0 && (
+            <p className="text-xs text-slate-600 mb-3">
+              {chapter.revision_count} révision{chapter.revision_count > 1 ? 's' : ''}
+            </p>
+          )}
+          <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-serif">
+            {chapter.content}
           </div>
         </div>
       )}
@@ -184,47 +235,45 @@ function LorebookSection({ projectId }: { projectId: string }) {
   const { data } = useQuery({
     queryKey: ['lorebook', projectId],
     queryFn: () => api.content.lorebook(projectId),
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   })
 
+  if (!data) return null
   const tabs = [
     { key: 'characters' as const, label: 'Personnages', icon: Users },
-    { key: 'places' as const, label: 'Lieux', icon: MapPin },
-    { key: 'lore' as const, label: 'Lore', icon: Scroll },
+    { key: 'places'     as const, label: 'Lieux',       icon: MapPin },
+    { key: 'lore'       as const, label: 'Lore',        icon: Scroll },
   ]
+  const visibleTabs = tabs.filter(t => Object.keys(data[t.key]).length > 0)
+  if (!visibleTabs.length) return null
 
-  if (!data) return null
-  const current = data[tab]
+  const current = data[tab] ?? {}
   const keys = Object.keys(current)
-  if (!keys.length) return null
 
   return (
     <div className="mt-8">
       <h2 className="text-lg font-semibold text-white mb-4">Lorebook</h2>
       <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-        {/* Tabs */}
         <div className="flex border-b border-slate-800">
-          {tabs.map(t => {
-            const count = Object.keys(data[t.key]).length
-            if (!count) return null
-            return (
-              <button
-                key={t.key}
-                onClick={() => { setTab(t.key); setSelected(null) }}
-                className={`flex items-center gap-2 px-4 py-3 text-sm transition-colors ${
-                  tab === t.key
-                    ? 'text-white border-b-2 border-indigo-500'
-                    : 'text-slate-500 hover:text-slate-300'
-                }`}
-              >
-                <t.icon className="w-4 h-4" />
-                {t.label} <span className="text-xs text-slate-600">({count})</span>
-              </button>
-            )
-          })}
+          {visibleTabs.map(t => (
+            <button
+              key={t.key}
+              onClick={() => { setTab(t.key); setSelected(null) }}
+              className={`flex items-center gap-2 px-4 py-3 text-sm transition-colors ${
+                tab === t.key
+                  ? 'text-white border-b-2 border-indigo-500'
+                  : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <t.icon className="w-4 h-4" />
+              {t.label}
+              <span className="text-xs text-slate-600">({Object.keys(data[t.key]).length})</span>
+            </button>
+          ))}
         </div>
-        {/* Content */}
         <div className="flex min-h-48">
-          <div className="w-48 border-r border-slate-800 py-2">
+          <div className="w-48 border-r border-slate-800 py-2 flex-shrink-0">
             {keys.map(k => (
               <button
                 key={k}
@@ -264,18 +313,24 @@ export default function ProjectPage() {
     queryKey: ['project', id],
     queryFn: () => api.projects.get(id!),
     enabled: !!id,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   })
 
   const { data: chapters, isLoading: chaptersLoading, error: chaptersError } = useQuery({
     queryKey: ['chapters', id],
     queryFn: () => api.content.chapters(id!),
     enabled: !!id,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
   })
+
+  const validatedCount = chapters?.filter(c => c.state === 'validated').length ?? 0
+  const totalCount = chapters?.length ?? 0
 
   return (
     <div className="min-h-screen bg-slate-950 p-8">
       <div className="max-w-3xl mx-auto">
-        {/* Header */}
         <button
           onClick={() => navigate('/')}
           className="flex items-center gap-2 text-slate-500 hover:text-white mb-6 transition-colors text-sm"
@@ -297,30 +352,32 @@ export default function ProjectPage() {
                 <>
                   {project.writing_style && <span>·</span>}
                   <span>{project.llm_model}</span>
-                  {project.llm_thinking && <span className="text-slate-600">thinking={project.llm_thinking}</span>}
+                  {project.llm_thinking && (
+                    <span className="text-slate-600">thinking={project.llm_thinking}</span>
+                  )}
+                </>
+              )}
+              {totalCount > 0 && (
+                <>
+                  <span>·</span>
+                  <span>{validatedCount}/{totalCount} chapitres rédigés</span>
                 </>
               )}
             </div>
           </div>
         )}
 
-        {/* Pipeline */}
         {id && <PipelineBar projectId={id} />}
 
         {/* Chapters */}
         <div>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-white">Chapitres</h2>
-            {chapters && chapters.length > 0 && (
-              <span className="text-sm text-slate-500">
-                {chapters.filter(c => c.state === 'validated').length}/{chapters.length} rédigé{chapters.length > 1 ? 's' : ''}
-              </span>
-            )}
           </div>
 
           {chaptersError ? (
             <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 text-red-400 text-sm">
-              Erreur de chargement : {(chaptersError as Error).message}
+              Erreur : {(chaptersError as Error).message}
             </div>
           ) : chaptersLoading ? (
             <div className="flex justify-center py-10">
@@ -330,7 +387,7 @@ export default function ProjectPage() {
             <div className="text-center py-10 text-slate-700 border border-dashed border-slate-800 rounded-xl">
               <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-30" />
               <p className="text-sm">Aucun chapitre pour l'instant</p>
-              <p className="text-xs mt-1 text-slate-800">Lancez le pipeline ci-dessus pour démarrer la génération</p>
+              <p className="text-xs mt-1 text-slate-800">Lancez le pipeline pour démarrer la génération</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -339,7 +396,6 @@ export default function ProjectPage() {
           )}
         </div>
 
-        {/* Lorebook */}
         {id && <LorebookSection projectId={id} />}
       </div>
     </div>

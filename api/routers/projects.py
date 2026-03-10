@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from api.dependencies import db_session
+from api.dependencies import db_session, get_current_user
 from api.schemas import ProjectCreateRequest, ProjectDetail, ProjectSummary
 from api import background
-from engine.storage.models import Project, Chapter
+from engine.storage.models import Project, Chapter, User
 from engine.storage.file_manager import FileManager
 from config.settings import settings
 
@@ -36,9 +36,14 @@ def _to_summary(project: Project, status: str) -> ProjectSummary:
 
 
 @router.get("", response_model=list[ProjectSummary])
-async def list_projects(session: AsyncSession = Depends(db_session)):
+async def list_projects(
+    session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
+):
     result = await session.execute(
-        select(Project).order_by(Project.created_at.desc())
+        select(Project)
+        .where(Project.owner_id == current_user.id)
+        .order_by(Project.created_at.desc())
     )
     projects = result.scalars().all()
     return [_to_summary(p, _project_status(p.id)) for p in projects]
@@ -48,6 +53,7 @@ async def list_projects(session: AsyncSession = Depends(db_session)):
 async def create_project(
     body: ProjectCreateRequest,
     session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
 ):
     import uuid
     project_id = str(uuid.uuid4())
@@ -68,6 +74,7 @@ async def create_project(
         min_validation_score=body.min_validation_score,
         max_revision_attempts=body.max_revision_attempts,
         project_dir=project_dir,
+        owner_id=current_user.id,
     )
     # Stocke le pitch dans les metadata du projet
     project.source_text = body.source_text
@@ -102,9 +109,10 @@ async def create_project(
 async def get_project(
     project_id: str,
     session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
 ):
     project = await session.get(Project, project_id)
-    if not project:
+    if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Projet introuvable")
 
     return ProjectDetail(
@@ -130,12 +138,13 @@ async def get_project(
 async def delete_project(
     project_id: str,
     session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
 ):
     if background.is_running(project_id):
         raise HTTPException(status_code=409, detail="Pipeline en cours, impossible de supprimer")
 
     project = await session.get(Project, project_id)
-    if not project:
+    if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Projet introuvable")
 
     await session.delete(project)

@@ -7,10 +7,10 @@ from fastapi import APIRouter, HTTPException, Path, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from api.dependencies import db_session
+from api.dependencies import db_session, get_current_user
 from api.schemas import ChapterResponse, LorebookResponse
 from engine.storage.file_manager import FileManager
-from engine.storage.models import Chapter, Project
+from engine.storage.models import Chapter, Project, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/projects", tags=["content"])
@@ -37,10 +37,11 @@ def _extract_title(content: str) -> str | None:
 async def list_chapters(
     project_id: str,
     session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
 ):
-    # Vérifie que le projet existe
+    # Vérifie que le projet existe et appartient à l'utilisateur
     project = await session.get(Project, project_id)
-    if not project:
+    if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Projet introuvable")
 
     # Récupère les chapitres depuis la DB
@@ -58,13 +59,14 @@ async def list_chapters(
     fm = _get_file_manager(project_id)
     chapters = []
     for ch in db_chapters:
-        content = fm.read_chapter(ch.number) if ch.content_path else None
+        # Toujours tenter de lire le contenu depuis le fichier (même si content_path n'est pas encore en DB)
+        content = fm.read_chapter(ch.number) or None
         title = ch.title or _extract_title(content or "")
         chapters.append(ChapterResponse(
             number=ch.number,
             title=title,
             state=ch.state,
-            content=content or None,
+            content=content,
             score=ch.last_score,
             revision_count=ch.revision_count,
         ))
@@ -76,9 +78,10 @@ async def get_chapter(
     project_id: str,
     number: int = Path(ge=1, description="Numéro du chapitre (>= 1)"),
     session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
 ):
     project = await session.get(Project, project_id)
-    if not project:
+    if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Projet introuvable")
 
     result = await session.execute(
@@ -106,7 +109,7 @@ async def get_chapter(
         )
 
     fm = _get_file_manager(project_id)
-    content = fm.read_chapter(number) if ch.content_path else None
+    content = fm.read_chapter(number) or None
     title = ch.title or _extract_title(content or "")
     return ChapterResponse(
         number=number,
@@ -122,9 +125,10 @@ async def get_chapter(
 async def get_lorebook(
     project_id: str,
     session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
 ):
     project = await session.get(Project, project_id)
-    if not project:
+    if not project or project.owner_id != current_user.id:
         raise HTTPException(status_code=404, detail="Projet introuvable")
 
     fm = _get_file_manager(project_id)
