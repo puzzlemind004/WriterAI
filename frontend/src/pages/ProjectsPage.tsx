@@ -33,6 +33,16 @@ interface FormState {
   max_revision_attempts: string
 }
 
+// En Docker, Ollama tourne sur l'hôte → host.docker.internal ; en local → localhost
+const OLLAMA_HOST = window.location.hostname === 'localhost' ? 'localhost' : 'host.docker.internal'
+
+const PROVIDER_DEFAULTS: Record<string, { model: string; api_base: string }> = {
+  ollama:    { model: 'gpt-oss:20b',         api_base: `http://${OLLAMA_HOST}:11434` },
+  openai:    { model: 'gpt-4o',              api_base: '' },
+  anthropic: { model: 'claude-opus-4-6', api_base: '' },
+  other:     { model: '',                    api_base: '' },
+}
+
 const DEFAULTS: FormState = {
   name: '',
   source_text: '',
@@ -46,16 +56,6 @@ const DEFAULTS: FormState = {
   llm_thinking: 'high',
   min_validation_score: '7',
   max_revision_attempts: '5',
-}
-
-// En Docker, Ollama tourne sur l'hôte → host.docker.internal ; en local → localhost
-const OLLAMA_HOST = window.location.hostname === 'localhost' ? 'localhost' : 'host.docker.internal'
-
-const PROVIDER_DEFAULTS: Record<string, { model: string; api_base: string }> = {
-  ollama:    { model: 'gpt-oss:20b',         api_base: `http://${OLLAMA_HOST}:11434` },
-  openai:    { model: 'gpt-4o',              api_base: '' },
-  anthropic: { model: 'claude-opus-4-6', api_base: '' },
-  other:     { model: '',                    api_base: '' },
 }
 
 function StepIndicator({ current }: { current: Step }) {
