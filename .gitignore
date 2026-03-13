@@ -3,6 +3,9 @@
 
 # Environnement local
 .env
+.env.docker
+.env.*
+!.env.example
 
 # Base de données locale
 *.db
