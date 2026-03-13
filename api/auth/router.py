@@ -27,7 +27,7 @@ def _set_refresh_cookie(response: Response, raw_token: str) -> None:
         httponly=True,
         samesite="lax",
         secure=settings.cookie_secure,
-        path="/",
+        path="/auth/refresh",
         max_age=settings.refresh_token_expire_days * 86400,
     )
 
@@ -104,7 +104,7 @@ async def logout(
     if raw_token:
         await revoke_refresh_token(session, raw_token)
 
-    response.delete_cookie(key=_REFRESH_COOKIE, path="/")
+    response.delete_cookie(key=_REFRESH_COOKIE, path="/auth/refresh")
 
 
 @router.get("/me", response_model=UserResponse)
