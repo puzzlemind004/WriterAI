@@ -1,0 +1,18 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Dépendances Node (séparé du code pour profiter du cache Docker)
+COPY package.json package-lock.json* ./
+RUN npm install
+
+# Config (sera écrasé par les volumes en dev)
+COPY vite.config.ts ./
+COPY tsconfig*.json ./
+COPY index.html ./
+COPY src/ ./src/
+COPY public/ ./public/
+
+EXPOSE 5173
+
+CMD ["npm", "run", "dev"]

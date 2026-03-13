@@ -1,0 +1,68 @@
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-writrerai}
+      POSTGRES_DB: WriterAI
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d WriterAI"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:${POSTGRES_PASSWORD:-writrerai}@postgres:5432/WriterAI
+      PROJECTS_DIR: /app/projects
+      COOKIE_SECURE: "false"
+      LOG_LEVEL: INFO
+    volumes:
+      # Code — hot reload
+      - ./api:/app/api
+      - ./engine:/app/engine
+      - ./config:/app/config
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      # Données
+      - ./projects:/app/projects
+    ports:
+      - "8000:8000"
+    # Ollama tourne sur la machine hôte — accessible via host.docker.internal
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      VITE_API_URL: http://api:8000
+    volumes:
+      # Code — hot reload Vite
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+    ports:
+      - "5173:5173"
+
+volumes:
+  postgres_data:
