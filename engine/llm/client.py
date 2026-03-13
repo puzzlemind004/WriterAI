@@ -113,7 +113,12 @@ class LLMClient:
 
         if not response.choices:
             raise RuntimeError(f"Réponse LLM vide (aucun choix retourné) par {model_string}")
-        content = response.choices[0].message.content or ""
+        msg = response.choices[0].message
+        content = msg.content or ""
+        # Avec thinking=high sur certains modèles (Ollama), la réponse narrative
+        # peut se retrouver dans reasoning_content si content est vide
+        if not content:
+            content = getattr(msg, "reasoning_content", "") or ""
         usage = response.usage
 
         cost = None

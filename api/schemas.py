@@ -78,6 +78,8 @@ class ChapterResponse(BaseModel):
     content: Optional[str]
     score: Optional[float]
     revision_count: int
+    brief: Optional[str] = None
+    critic_comments: list[str] = Field(default_factory=list)
 
 
 class LorebookResponse(BaseModel):

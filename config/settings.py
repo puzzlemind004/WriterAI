@@ -1,14 +1,18 @@
+from pathlib import Path
 from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field, field_validator
+
+# Répertoire racine du projet (là où se trouve ce fichier config/)
+_ROOT = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///./writerai.db"
 
-    # Storage
-    projects_dir: str = "./projects"
+    # Storage — chemin absolu pour éviter les problèmes de CWD selon d'où uvicorn est lancé
+    projects_dir: str = str(_ROOT / "projects")
 
     # LLM defaults (can be overridden per project)
     default_llm_provider: str = "openai"

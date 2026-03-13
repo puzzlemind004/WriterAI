@@ -103,9 +103,16 @@ class CriticAgent(BaseAgent):
                 f"**{name}**\n{content}" for name, content in relevant_chars.items()
             )
 
+        # Tronque le chapitre à 3000 mots max pour ne pas saturer le contexte
+        words = chapter_text.split()
+        if len(words) > 3000:
+            chapter_excerpt = ' '.join(words[:1500]) + '\n\n[...chapitre tronqué pour l\'évaluation...]\n\n' + ' '.join(words[-1500:])
+        else:
+            chapter_excerpt = chapter_text
+
         user_prompt = f"""## Chapitre {chapter_number} à évaluer
 
-{chapter_text}
+{chapter_excerpt}
 
 ---
 
@@ -129,7 +136,7 @@ class CriticAgent(BaseAgent):
 
 Évalue ce chapitre selon la grille ci-dessus."""
 
-        response = self._llm_call(ctx, SYSTEM_PROMPT, user_prompt, temperature=0.2)
+        response = self._llm_call(ctx, SYSTEM_PROMPT, user_prompt, temperature=0.2, max_tokens=8192)
 
         try:
             evaluation = self._parse_json(response.content)

@@ -7,6 +7,8 @@ import shutil
 from pathlib import Path
 from datetime import datetime
 from config.settings import settings
+from engine.events.bus import bus
+from engine.events.types import Event, EventType
 
 
 class FileManager:
@@ -99,6 +101,7 @@ class FileManager:
         path = self._safe_path(self.root / "notes", relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        self._emit(EventType.LOREBOOK_UPDATED, {"file": relative_path})
 
     def list_lorebook_entities(self, entity_type: str) -> list[str]:
         """
@@ -135,6 +138,7 @@ class FileManager:
     def write_act(self, act_number: int, content: str) -> None:
         path = self.root / "actes" / f"acte_{act_number:02d}.md"
         path.write_text(content, encoding="utf-8")
+        self._emit(EventType.LOREBOOK_UPDATED, {"file": f"actes/acte_{act_number:02d}.md"})
 
     def read_act(self, act_number: int) -> str:
         path = self.root / "actes" / f"acte_{act_number:02d}.md"
@@ -149,6 +153,11 @@ class FileManager:
     def write_chapter_brief(self, chapter_number: int, content: str) -> str:
         path = self.root / "briefs" / f"chapitre_{chapter_number:02d}.md"
         path.write_text(content, encoding="utf-8")
+        self._emit(EventType.CHAPTER_STATE_CHANGED, {
+            "chapter_number": chapter_number,
+            "old_state": "none",
+            "new_state": "planned",
+        })
         return str(path)
 
     def read_chapter_brief(self, chapter_number: int) -> str:
@@ -166,6 +175,11 @@ class FileManager:
             self._archive_chapter(chapter_number, path.read_text(encoding="utf-8"))
 
         path.write_text(content, encoding="utf-8")
+        self._emit(EventType.CHAPTER_STATE_CHANGED, {
+            "chapter_number": chapter_number,
+            "old_state": "writing",
+            "new_state": "writing",
+        })
         return str(path)
 
     def read_chapter(self, chapter_number: int) -> str:
@@ -195,6 +209,12 @@ class FileManager:
             f.stem: f.read_text(encoding="utf-8")
             for f in sorted(folder.glob("*.md"))
         }
+
+    def _emit(self, event_type: EventType, payload: dict) -> None:
+        try:
+            bus.emit(Event(type=event_type, project_id=self.project_id, payload=payload))
+        except Exception:
+            pass  # Ne jamais bloquer une écriture à cause du bus
 
     @staticmethod
     def _slugify(name: str) -> str:

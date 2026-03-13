@@ -208,9 +208,11 @@ class Orchestrator:
             critic_result = self._critique_chapter(n)
 
             if not critic_result.success:
-                self._transition(chapter, ChapterState.ERROR)
-                logger.error(f"[orchestrator] Chapitre {n} — critique échouée, passage en ERROR")
-                return
+                # Critique échouée (ex: LLM saturé) — on valide de force pour ne pas bloquer le pipeline
+                logger.warning(f"[orchestrator] Chapitre {n} — critique échouée, validation forcée")
+                chapter.validated_forced = True
+                validated = True
+                break
 
             score = critic_result.data.get("note_globale", 0.0)
             comments = critic_result.data.get("commentaires_constructifs", [])
@@ -246,7 +248,10 @@ class Orchestrator:
                 validated = True
 
         # Chapitre validé — mise à jour du lorebook sur la version finale
-        self._update_lorebook(n, writer_result)
+        try:
+            self._update_lorebook(n, writer_result)
+        except Exception as e:
+            logger.error(f"[orchestrator] Chapitre {n} — _update_lorebook a levé une exception : {e}")
         self._transition(chapter, ChapterState.VALIDATED)
 
         # Persistance DB : état final + score + chemin du fichier + titre

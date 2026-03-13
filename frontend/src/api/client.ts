@@ -130,6 +130,8 @@ export interface ChapterResponse {
   content: string | null
   score: number | null
   revision_count: number
+  brief: string | null
+  critic_comments: string[]
 }
 
 export interface LorebookResponse {

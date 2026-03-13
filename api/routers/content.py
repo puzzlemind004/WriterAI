@@ -59,8 +59,8 @@ async def list_chapters(
     fm = _get_file_manager(project_id)
     chapters = []
     for ch in db_chapters:
-        # Toujours tenter de lire le contenu depuis le fichier (même si content_path n'est pas encore en DB)
         content = fm.read_chapter(ch.number) or None
+        brief = fm.read_chapter_brief(ch.number) or None
         title = ch.title or _extract_title(content or "")
         chapters.append(ChapterResponse(
             number=ch.number,
@@ -69,6 +69,8 @@ async def list_chapters(
             content=content,
             score=ch.last_score,
             revision_count=ch.revision_count,
+            brief=brief,
+            critic_comments=ch.last_critic_comments or [],
         ))
     return chapters
 
@@ -110,6 +112,7 @@ async def get_chapter(
 
     fm = _get_file_manager(project_id)
     content = fm.read_chapter(number) or None
+    brief = fm.read_chapter_brief(number) or None
     title = ch.title or _extract_title(content or "")
     return ChapterResponse(
         number=number,
@@ -118,6 +121,8 @@ async def get_chapter(
         content=content or None,
         score=ch.last_score,
         revision_count=ch.revision_count,
+        brief=brief,
+        critic_comments=ch.last_critic_comments or [],
     )
 
 
