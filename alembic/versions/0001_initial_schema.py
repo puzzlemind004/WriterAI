@@ -4,7 +4,7 @@ Revision ID: 0001
 Revises:
 Create Date: 2026-03-13
 
-Crée toutes les tables from scratch — remplace les migrations fragmentées.
+Crée toutes les tables from scratch — idempotent grâce à IF NOT EXISTS.
 """
 from typing import Sequence, Union
 from alembic import op
@@ -18,129 +18,120 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'users',
-        sa.Column('id', sa.String(), nullable=False),
-        sa.Column('email', sa.String(), nullable=False),
-        sa.Column('hashed_password', sa.String(), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('is_active', sa.Boolean(), nullable=True),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('email'),
-    )
-    op.create_index('ix_users_email', 'users', ['email'])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id VARCHAR NOT NULL PRIMARY KEY,
+            email VARCHAR NOT NULL UNIQUE,
+            hashed_password VARCHAR NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE,
+            is_active BOOLEAN DEFAULT TRUE
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_users_email ON users (email)")
 
-    op.create_table(
-        'refresh_tokens',
-        sa.Column('id', sa.String(), nullable=False),
-        sa.Column('token_hash', sa.String(), nullable=False),
-        sa.Column('user_id', sa.String(), nullable=False),
-        sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
-        sa.Column('revoked', sa.Boolean(), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('user_agent', sa.String(), nullable=True),
-        sa.ForeignKeyConstraint(['user_id'], ['users.id']),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('token_hash'),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            id VARCHAR NOT NULL PRIMARY KEY,
+            token_hash VARCHAR NOT NULL UNIQUE,
+            user_id VARCHAR NOT NULL REFERENCES users(id),
+            expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+            revoked BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE,
+            user_agent VARCHAR
+        )
+    """)
 
-    op.create_table(
-        'projects',
-        sa.Column('id', sa.String(), nullable=False),
-        sa.Column('name', sa.String(), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('llm_provider', sa.String(), nullable=False),
-        sa.Column('llm_model', sa.String(), nullable=False),
-        sa.Column('llm_api_key', sa.String(), nullable=True),
-        sa.Column('llm_api_base', sa.String(), nullable=True),
-        sa.Column('llm_thinking', sa.String(), nullable=True),
-        sa.Column('source_text', sa.Text(), nullable=True),
-        sa.Column('target_chapter_count', sa.Integer(), nullable=True),
-        sa.Column('writing_style', sa.Text(), nullable=True),
-        sa.Column('tone_keywords', sa.JSON(), nullable=True),
-        sa.Column('language', sa.String(), nullable=True),
-        sa.Column('min_validation_score', sa.Float(), nullable=True),
-        sa.Column('max_revision_attempts', sa.Integer(), nullable=True),
-        sa.Column('project_dir', sa.String(), nullable=False),
-        sa.Column('owner_id', sa.String(), nullable=False),
-        sa.ForeignKeyConstraint(['owner_id'], ['users.id']),
-        sa.PrimaryKeyConstraint('id'),
-    )
-    op.create_index('ix_projects_owner_id', 'projects', ['owner_id'])
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS projects (
+            id VARCHAR NOT NULL PRIMARY KEY,
+            name VARCHAR NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE,
+            updated_at TIMESTAMP WITH TIME ZONE,
+            llm_provider VARCHAR NOT NULL,
+            llm_model VARCHAR NOT NULL,
+            llm_api_key VARCHAR,
+            llm_api_base VARCHAR,
+            llm_thinking VARCHAR,
+            source_text TEXT,
+            target_chapter_count INTEGER,
+            writing_style TEXT,
+            tone_keywords JSON,
+            language VARCHAR DEFAULT 'fr',
+            min_validation_score FLOAT DEFAULT 7.0,
+            max_revision_attempts INTEGER DEFAULT 5,
+            project_dir VARCHAR NOT NULL,
+            owner_id VARCHAR NOT NULL REFERENCES users(id)
+        )
+    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ix_projects_owner_id ON projects (owner_id)")
 
-    op.create_table(
-        'chapters',
-        sa.Column('id', sa.String(), nullable=False),
-        sa.Column('project_id', sa.String(), nullable=False),
-        sa.Column('number', sa.Integer(), nullable=False),
-        sa.Column('title', sa.String(), nullable=True),
-        sa.Column('state', sa.String(), nullable=False),
-        sa.Column('revision_count', sa.Integer(), nullable=True),
-        sa.Column('last_score', sa.Float(), nullable=True),
-        sa.Column('last_critic_comments', sa.JSON(), nullable=True),
-        sa.Column('brief_path', sa.String(), nullable=True),
-        sa.Column('content_path', sa.String(), nullable=True),
-        sa.Column('tone_override', sa.JSON(), nullable=True),
-        sa.Column('is_user_controlled', sa.Boolean(), nullable=True),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(['project_id'], ['projects.id']),
-        sa.PrimaryKeyConstraint('id'),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS chapters (
+            id VARCHAR NOT NULL PRIMARY KEY,
+            project_id VARCHAR NOT NULL REFERENCES projects(id),
+            number INTEGER NOT NULL,
+            title VARCHAR,
+            state VARCHAR NOT NULL DEFAULT 'pending',
+            revision_count INTEGER DEFAULT 0,
+            last_score FLOAT,
+            last_critic_comments JSON,
+            brief_path VARCHAR,
+            content_path VARCHAR,
+            tone_override JSON,
+            is_user_controlled BOOLEAN DEFAULT FALSE,
+            created_at TIMESTAMP WITH TIME ZONE,
+            updated_at TIMESTAMP WITH TIME ZONE
+        )
+    """)
 
-    op.create_table(
-        'chapter_state_history',
-        sa.Column('id', sa.String(), nullable=False),
-        sa.Column('chapter_id', sa.String(), nullable=False),
-        sa.Column('old_state', sa.String(), nullable=False),
-        sa.Column('new_state', sa.String(), nullable=False),
-        sa.Column('changed_by', sa.String(), nullable=False),
-        sa.Column('note', sa.Text(), nullable=True),
-        sa.Column('timestamp', sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(['chapter_id'], ['chapters.id']),
-        sa.PrimaryKeyConstraint('id'),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS chapter_state_history (
+            id VARCHAR NOT NULL PRIMARY KEY,
+            chapter_id VARCHAR NOT NULL REFERENCES chapters(id),
+            old_state VARCHAR NOT NULL,
+            new_state VARCHAR NOT NULL,
+            changed_by VARCHAR NOT NULL,
+            note TEXT,
+            timestamp TIMESTAMP WITH TIME ZONE
+        )
+    """)
 
-    op.create_table(
-        'agent_logs',
-        sa.Column('id', sa.String(), nullable=False),
-        sa.Column('project_id', sa.String(), nullable=False),
-        sa.Column('chapter_id', sa.String(), nullable=True),
-        sa.Column('agent_name', sa.String(), nullable=False),
-        sa.Column('status', sa.String(), nullable=False),
-        sa.Column('error_message', sa.Text(), nullable=True),
-        sa.Column('input_tokens', sa.Integer(), nullable=True),
-        sa.Column('output_tokens', sa.Integer(), nullable=True),
-        sa.Column('cost_usd', sa.Float(), nullable=True),
-        sa.Column('duration_seconds', sa.Float(), nullable=True),
-        sa.Column('started_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('completed_at', sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(['project_id'], ['projects.id']),
-        sa.PrimaryKeyConstraint('id'),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS agent_logs (
+            id VARCHAR NOT NULL PRIMARY KEY,
+            project_id VARCHAR NOT NULL REFERENCES projects(id),
+            chapter_id VARCHAR,
+            agent_name VARCHAR NOT NULL,
+            status VARCHAR NOT NULL,
+            error_message TEXT,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            cost_usd FLOAT,
+            duration_seconds FLOAT,
+            started_at TIMESTAMP WITH TIME ZONE,
+            completed_at TIMESTAMP WITH TIME ZONE
+        )
+    """)
 
-    op.create_table(
-        'lorebook_entries',
-        sa.Column('id', sa.String(), nullable=False),
-        sa.Column('project_id', sa.String(), nullable=False),
-        sa.Column('entity_type', sa.String(), nullable=False),
-        sa.Column('entity_name', sa.String(), nullable=False),
-        sa.Column('file_path', sa.String(), nullable=False),
-        sa.Column('created_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('updated_at', sa.DateTime(timezone=True), nullable=True),
-        sa.Column('last_modified_by', sa.String(), nullable=True),
-        sa.PrimaryKeyConstraint('id'),
-    )
+    op.execute("""
+        CREATE TABLE IF NOT EXISTS lorebook_entries (
+            id VARCHAR NOT NULL PRIMARY KEY,
+            project_id VARCHAR NOT NULL,
+            entity_type VARCHAR NOT NULL,
+            entity_name VARCHAR NOT NULL,
+            file_path VARCHAR NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE,
+            updated_at TIMESTAMP WITH TIME ZONE,
+            last_modified_by VARCHAR
+        )
+    """)
 
 
 def downgrade() -> None:
-    op.drop_table('lorebook_entries')
-    op.drop_table('agent_logs')
-    op.drop_table('chapter_state_history')
-    op.drop_table('chapters')
-    op.drop_index('ix_projects_owner_id', 'projects')
-    op.drop_table('projects')
-    op.drop_table('refresh_tokens')
-    op.drop_index('ix_users_email', 'users')
-    op.drop_table('users')
+    op.execute("DROP TABLE IF EXISTS lorebook_entries")
+    op.execute("DROP TABLE IF EXISTS agent_logs")
+    op.execute("DROP TABLE IF EXISTS chapter_state_history")
+    op.execute("DROP TABLE IF EXISTS chapters")
+    op.execute("DROP TABLE IF EXISTS projects")
+    op.execute("DROP TABLE IF EXISTS refresh_tokens")
+    op.execute("DROP TABLE IF EXISTS users")
