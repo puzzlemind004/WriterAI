@@ -35,6 +35,7 @@ class User(Base):
 
     projects = relationship("Project", back_populates="owner", cascade="all, delete-orphan")
     refresh_tokens = relationship("RefreshToken", back_populates="user", cascade="all, delete-orphan")
+    api_keys = relationship("ApiKey", back_populates="user", cascade="all, delete-orphan")
 
 
 class RefreshToken(Base):
@@ -170,6 +171,28 @@ class AgentLog(Base):
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     project = relationship("Project", back_populates="agent_logs")
+
+
+class ApiKey(Base):
+    """Clés API utilisateur chiffrées."""
+    __tablename__ = "api_keys"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    label = Column(String, nullable=False)
+    provider = Column(String, nullable=False)
+    _key_encrypted = Column("key_encrypted", String, nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    @property
+    def key_value(self) -> str:
+        return decrypt(self._key_encrypted)
+
+    @key_value.setter
+    def key_value(self, value: str) -> None:
+        self._key_encrypted = encrypt(value)
+
+    user = relationship("User", back_populates="api_keys")
 
 
 class LorebookEntry(Base):

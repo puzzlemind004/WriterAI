@@ -9,7 +9,7 @@ from sqlalchemy import select
 from api.dependencies import db_session, get_current_user
 from api.schemas import ProjectCreateRequest, ProjectDetail, ProjectSummary
 from api import background
-from engine.storage.models import Project, Chapter, User
+from engine.storage.models import Project, Chapter, User, ApiKey
 from engine.storage.file_manager import FileManager
 from config.settings import settings
 
@@ -59,14 +59,28 @@ async def create_project(
     project_id = str(uuid.uuid4())
     project_dir = os.path.join(settings.projects_dir, project_id)
 
+    # Résolution de la clé API : soit inline, soit via l'ID d'une clé stockée
+    resolved_api_key = body.llm.api_key
+    if not resolved_api_key and body.llm.api_key_id:
+        result = await session.execute(
+            select(ApiKey).where(ApiKey.id == body.llm.api_key_id, ApiKey.user_id == current_user.id)
+        )
+        stored_key = result.scalar_one_or_none()
+        if not stored_key:
+            raise HTTPException(status_code=404, detail="Clé API introuvable")
+        resolved_api_key = stored_key.key_value
+
+    # N'utiliser api_base que pour Ollama — les providers cloud ont leur propre URL
+    resolved_api_base = body.llm.api_base if body.llm.provider == "ollama" else None
+
     project = Project(
         id=project_id,
         name=body.name,
         source_text=body.source_text,
         llm_provider=body.llm.provider,
         llm_model=body.llm.model,
-        llm_api_base=body.llm.api_base,
-        llm_api_key=body.llm.api_key,
+        llm_api_base=resolved_api_base,
+        llm_api_key=resolved_api_key,
         llm_thinking=body.llm.thinking,
         target_chapter_count=body.target_chapter_count,
         writing_style=body.writing_style,

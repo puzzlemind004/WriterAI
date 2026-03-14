@@ -1,17 +1,17 @@
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { Plus, BookOpen, Trash2, Loader2, LogOut, ChevronRight, ChevronLeft, Settings } from 'lucide-react'
-import { api, type ProjectCreateRequest, type LLMConfig } from '../api/client'
-import { useAuth } from '../auth/AuthContext'
+import { Plus, BookOpen, Trash2, Loader2, ChevronRight, ChevronLeft, Settings } from 'lucide-react'
+import { api, type ProjectCreateRequest, type LLMConfig, type ApiKeyResponse } from '../api/client'
+import AppLayout from '../components/AppLayout'
 
 // --- Wizard de création de projet (3 étapes) ---
 
-type Step = 'general' | 'llm' | 'advanced'
-const STEPS: Step[] = ['general', 'llm', 'advanced']
+type Step = 'llm' | 'general' | 'advanced'
+const STEPS: Step[] = ['llm', 'general', 'advanced']
 const STEP_LABELS: Record<Step, string> = {
-  general: 'Général',
   llm: 'Modèle IA',
+  general: 'Général',
   advanced: 'Avancé',
 }
 
@@ -22,10 +22,9 @@ interface FormState {
   writing_style: string
   tone_keywords: string       // CSV libre
   target_chapter_count: string
-  // LLM
-  llm_provider: 'ollama' | 'openai' | 'anthropic' | 'other'
+  // LLM — source = 'local' | api_key id
+  llm_source: string          // 'local' ou l'id d'une ApiKey
   llm_model: string
-  llm_api_key: string
   llm_api_base: string
   llm_thinking: 'off' | 'low' | 'medium' | 'high'
   // Avancé
@@ -36,12 +35,6 @@ interface FormState {
 // En Docker, Ollama tourne sur l'hôte → host.docker.internal ; en local → localhost
 const OLLAMA_HOST = window.location.hostname === 'localhost' ? 'localhost' : 'host.docker.internal'
 
-const PROVIDER_DEFAULTS: Record<string, { model: string; api_base: string }> = {
-  ollama:    { model: 'gpt-oss:20b',         api_base: `http://${OLLAMA_HOST}:11434` },
-  openai:    { model: 'gpt-4o',              api_base: '' },
-  anthropic: { model: 'claude-opus-4-6', api_base: '' },
-  other:     { model: '',                    api_base: '' },
-}
 
 const DEFAULTS: FormState = {
   name: '',
@@ -49,9 +42,8 @@ const DEFAULTS: FormState = {
   writing_style: '',
   tone_keywords: '',
   target_chapter_count: '',
-  llm_provider: 'ollama',
-  llm_model: 'gpt-oss:20b',
-  llm_api_key: '',
+  llm_source: 'local',
+  llm_model: '',
   llm_api_base: `http://${OLLAMA_HOST}:11434`,
   llm_thinking: 'high',
   min_validation_score: '7',
@@ -85,12 +77,32 @@ function StepIndicator({ current }: { current: Step }) {
 function NewProjectModal({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient()
   const navigate = useNavigate()
-  const [step, setStep] = useState<Step>('general')
+  const [step, setStep] = useState<Step>('llm')
   const [form, setForm] = useState<FormState>(DEFAULTS)
+  const [customModel, setCustomModel] = useState(false)  // true = afficher l'input libre
   const f = <K extends keyof FormState>(key: K) => (
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
       setForm(prev => ({ ...prev, [key]: e.target.value }))
   )
+
+  const { data: apiKeys = [] } = useQuery<ApiKeyResponse[]>({
+    queryKey: ['api-keys'],
+    queryFn: () => api.account.listApiKeys(),
+  })
+
+  // Source sélectionnée : 'local' ou une ApiKey
+  const selectedKey = apiKeys.find(k => k.id === form.llm_source)
+  const isLocal = form.llm_source === 'local'
+  const currentProvider = isLocal ? 'ollama' : (selectedKey?.provider ?? 'other')
+  const supportsThinking = currentProvider === 'ollama' || currentProvider === 'anthropic'
+
+  // Chargement des modèles disponibles pour la source sélectionnée
+  const { data: modelsData, isFetching: modelsLoading } = useQuery({
+    queryKey: ['models', form.llm_source],
+    queryFn: () => api.models.list(form.llm_source),
+    staleTime: 30_000,
+  })
+  const availableModels = modelsData?.models ?? []
 
   const create = useMutation({
     mutationFn: (data: ProjectCreateRequest) => api.projects.create(data),
@@ -100,22 +112,33 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
     },
   })
 
-  function canAdvance(): boolean {
-    if (step === 'general') return form.name.trim().length > 0 && form.source_text.trim().length >= 10
-    if (step === 'llm') return form.llm_model.trim().length > 0
-    return true
-  }
-
-  function handleProviderChange(provider: FormState['llm_provider']) {
-    const def = PROVIDER_DEFAULTS[provider]
+  function handleSourceChange(source: string) {
+    const key = apiKeys.find(k => k.id === source)
+    const provider = source === 'local' ? 'ollama' : (key?.provider ?? 'other')
     setForm(prev => ({
       ...prev,
-      llm_provider: provider,
-      llm_model: def.model,
-      llm_api_base: def.api_base,
-      // Réinitialise thinking si le provider ne le supporte pas
+      llm_source: source,
+      llm_model: '',
+      llm_api_base: source === 'local' ? `http://${OLLAMA_HOST}:11434` : '',
       llm_thinking: provider === 'ollama' || provider === 'anthropic' ? prev.llm_thinking : 'off',
     }))
+    setCustomModel(false)
+  }
+
+  function handleModelSelect(value: string) {
+    if (value === '__other__') {
+      setCustomModel(true)
+      setForm(prev => ({ ...prev, llm_model: '' }))
+    } else {
+      setCustomModel(false)
+      setForm(prev => ({ ...prev, llm_model: value }))
+    }
+  }
+
+  function canAdvance(): boolean {
+    if (step === 'llm') return form.llm_model.trim().length > 0
+    if (step === 'general') return form.name.trim().length > 0 && form.source_text.trim().length >= 10
+    return true
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -123,11 +146,14 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
     if (step !== 'advanced') { setStep(STEPS[STEPS.indexOf(step) + 1]); return }
 
     const llm: LLMConfig = {
-      provider: form.llm_provider,
+      provider: currentProvider,
       model: form.llm_model.trim(),
     }
-    if (form.llm_api_key.trim()) llm.api_key = form.llm_api_key.trim()
-    if (form.llm_api_base.trim()) llm.api_base = form.llm_api_base.trim()
+    if (isLocal) {
+      if (form.llm_api_base.trim()) llm.api_base = form.llm_api_base.trim()
+    } else if (selectedKey) {
+      llm.api_key_id = selectedKey.id
+    }
     if (form.llm_thinking !== 'off') llm.thinking = form.llm_thinking
 
     const payload: ProjectCreateRequest = {
@@ -149,6 +175,13 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
   const inputCls = "w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
   const labelCls = "block text-xs font-medium text-slate-400 mb-1"
 
+  // Construire les options pour le select de source
+  const sourceOptions = [
+    { value: 'local', label: 'Local (Ollama)', group: 'Local' },
+    ...apiKeys.map(k => ({ value: k.id, label: k.label, group: k.provider })),
+  ]
+  const singleOption = sourceOptions.length === 1
+
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
@@ -162,7 +195,106 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
 
           <form onSubmit={handleSubmit} noValidate className="space-y-4">
 
-            {/* Étape 1 : Général */}
+            {/* Étape 1 : Modèle IA */}
+            {step === 'llm' && (
+              <>
+                <div>
+                  <label className={labelCls}>Source</label>
+                  <select
+                    className={inputCls}
+                    value={form.llm_source}
+                    onChange={e => handleSourceChange(e.target.value)}
+                  >
+                    <option value="local">Local (Ollama)</option>
+                    {apiKeys.length > 0 && (
+                      <optgroup label="Mes clés API">
+                        {apiKeys.map(k => (
+                          <option key={k.id} value={k.id}>{k.label} ({k.provider})</option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                  {apiKeys.length === 0 && (
+                    <p className="text-xs text-slate-600 mt-1">
+                      Aucune clé API enregistrée.{' '}
+                      <button type="button" onClick={() => { onClose(); navigate('/account') }} className="text-indigo-400 hover:text-indigo-300">
+                        Ajouter dans Mon compte →
+                      </button>
+                    </p>
+                  )}
+                </div>
+
+                <div>
+                  <label className={labelCls}>
+                    Modèle *
+                    {modelsLoading && <span className="text-slate-600 font-normal ml-2">Chargement…</span>}
+                  </label>
+
+                  {!customModel ? (
+                    <select
+                      className={inputCls}
+                      value={form.llm_model}
+                      onChange={e => handleModelSelect(e.target.value)}
+                      disabled={modelsLoading}
+                    >
+                      <option value="">— Choisir un modèle —</option>
+                      {availableModels.map(m => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                      <option value="__other__">Autre (saisir manuellement)</option>
+                    </select>
+                  ) : (
+                    <div className="flex gap-2">
+                      <input
+                        className={inputCls}
+                        placeholder="nom-du-modèle"
+                        value={form.llm_model}
+                        onChange={f('llm_model')}
+                        autoFocus
+                      />
+                      <button
+                        type="button"
+                        onClick={() => { setCustomModel(false); setForm(prev => ({ ...prev, llm_model: '' })) }}
+                        className="text-xs text-slate-500 hover:text-slate-300 whitespace-nowrap"
+                      >
+                        ← Liste
+                      </button>
+                    </div>
+                  )}
+
+                  {availableModels.length === 0 && !modelsLoading && isLocal && (
+                    <p className="text-xs text-amber-600 mt-1">Ollama inaccessible ou aucun modèle installé.</p>
+                  )}
+                </div>
+
+                {supportsThinking && (
+                  <div>
+                    <label className={labelCls}>Mode de réflexion (thinking)</label>
+                    <select
+                      className={inputCls}
+                      value={form.llm_thinking}
+                      onChange={e => setForm(prev => ({ ...prev, llm_thinking: e.target.value as FormState['llm_thinking'] }))}
+                    >
+                      <option value="off">Désactivé</option>
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High (recommandé)</option>
+                    </select>
+                    <p className="text-xs text-slate-600 mt-1">Le thinking améliore la qualité mais augmente la durée de génération</p>
+                  </div>
+                )}
+
+                <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 text-xs text-slate-500 space-y-1">
+                  <p className="font-medium text-slate-400">Résumé</p>
+                  <p>
+                    {isLocal ? 'Ollama (local)' : selectedKey?.label ?? '—'} · {form.llm_model || '—'}
+                    {form.llm_thinking !== 'off' ? ` · thinking=${form.llm_thinking}` : ''}
+                  </p>
+                </div>
+              </>
+            )}
+
+            {/* Étape 2 : Général */}
             {step === 'general' && (
               <>
                 <div>
@@ -172,7 +304,6 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                     placeholder="L'oiseau rouge..."
                     value={form.name}
                     onChange={f('name')}
-                    required
                     autoFocus
                   />
                 </div>
@@ -185,8 +316,6 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                     placeholder="Décrivez votre histoire : personnages principaux, univers, enjeux, ton général. Plus c'est détaillé, meilleur sera le résultat..."
                     value={form.source_text}
                     onChange={f('source_text')}
-                    required
-                    minLength={10}
                   />
                   <p className="text-xs text-slate-600 mt-1">{form.source_text.length} caractères{form.source_text.length < 200 ? ' — un synopsis de 200+ caractères donnera de meilleurs résultats' : ''}</p>
                 </div>
@@ -223,82 +352,6 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                       onChange={f('target_chapter_count')}
                     />
                   </div>
-                </div>
-              </>
-            )}
-
-            {/* Étape 2 : LLM */}
-            {step === 'llm' && (
-              <>
-                <div>
-                  <label className={labelCls}>Fournisseur</label>
-                  <select
-                    className={inputCls}
-                    value={form.llm_provider}
-                    onChange={e => handleProviderChange(e.target.value as FormState['llm_provider'])}
-                  >
-                    <option value="ollama">Ollama (local)</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic</option>
-                    <option value="other">Autre (LiteLLM)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className={labelCls}>Modèle *</label>
-                  <input
-                    className={inputCls}
-                    placeholder={PROVIDER_DEFAULTS[form.llm_provider].model || 'nom-du-modèle'}
-                    value={form.llm_model}
-                    onChange={f('llm_model')}
-                    required
-                  />
-                </div>
-
-                {form.llm_provider !== 'ollama' && (
-                  <div>
-                    <label className={labelCls}>Clé API</label>
-                    <input
-                      type="password"
-                      className={inputCls}
-                      placeholder="sk-..."
-                      value={form.llm_api_key}
-                      onChange={f('llm_api_key')}
-                    />
-                  </div>
-                )}
-
-                <div>
-                  <label className={labelCls}>URL de l'API <span className="text-slate-600">(optionnel)</span></label>
-                  <input
-                    className={inputCls}
-                    placeholder={PROVIDER_DEFAULTS[form.llm_provider].api_base || 'https://...'}
-                    value={form.llm_api_base}
-                    onChange={f('llm_api_base')}
-                  />
-                </div>
-
-                {(form.llm_provider === 'ollama' || form.llm_provider === 'anthropic') && (
-                  <div>
-                    <label className={labelCls}>Mode de réflexion (thinking)</label>
-                    <select
-                      className={inputCls}
-                      value={form.llm_thinking}
-                      onChange={e => setForm(prev => ({ ...prev, llm_thinking: e.target.value as FormState['llm_thinking'] }))}
-                    >
-                      <option value="off">Désactivé</option>
-                      <option value="low">Low</option>
-                      <option value="medium">Medium</option>
-                      <option value="high">High (recommandé)</option>
-                    </select>
-                    <p className="text-xs text-slate-600 mt-1">Le thinking améliore la qualité mais augmente la durée de génération</p>
-                  </div>
-                )}
-
-                <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 text-xs text-slate-500 space-y-1">
-                  <p className="font-medium text-slate-400">Résumé</p>
-                  <p>{form.llm_provider} · {form.llm_model || '—'}{form.llm_thinking !== 'off' ? ` · thinking=${form.llm_thinking}` : ''}</p>
-                  {form.llm_api_base && <p className="truncate">{form.llm_api_base}</p>}
                 </div>
               </>
             )}
@@ -341,7 +394,10 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
                 <div className="bg-slate-800/50 border border-slate-700 rounded-lg p-3 text-xs text-slate-500 space-y-1 mt-2">
                   <p className="font-medium text-slate-400">Récapitulatif du projet</p>
                   <p><span className="text-slate-400">Titre :</span> {form.name}</p>
-                  <p><span className="text-slate-400">Modèle :</span> {form.llm_provider} / {form.llm_model}</p>
+                  <p>
+                    <span className="text-slate-400">Modèle :</span>{' '}
+                    {isLocal ? 'Ollama (local)' : selectedKey?.label ?? '—'} / {form.llm_model}
+                  </p>
                   {form.target_chapter_count && <p><span className="text-slate-400">Chapitres :</span> {form.target_chapter_count}</p>}
                   {form.writing_style && <p><span className="text-slate-400">Style :</span> {form.writing_style}</p>}
                 </div>
@@ -356,7 +412,7 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
 
             {/* Navigation */}
             <div className="flex gap-3 pt-2">
-              {step !== 'general' ? (
+              {step !== 'llm' ? (
                 <button
                   type="button"
                   onClick={() => setStep(STEPS[STEPS.indexOf(step) - 1])}
@@ -424,12 +480,6 @@ export default function ProjectsPage() {
   const [showModal, setShowModal] = useState(false)
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const { user, logout } = useAuth()
-
-  async function handleLogout() {
-    await logout()
-    navigate('/login')
-  }
 
   const { data: projects, isLoading } = useQuery({
     queryKey: ['projects'],
@@ -442,30 +492,20 @@ export default function ProjectsPage() {
   })
 
   return (
-    <div className="min-h-screen bg-slate-950 p-8">
+    <AppLayout>
+      <div className="p-8">
       <div className="max-w-4xl mx-auto">
         <div className="flex items-center justify-between mb-10">
           <div>
-            <h1 className="text-3xl font-bold text-white">WriterAI</h1>
-            <p className="text-slate-400 mt-1">Vos romans générés par IA</p>
+            <p className="text-slate-400">Vos romans générés par IA</p>
           </div>
-          <div className="flex items-center gap-3">
-            {user && <span className="text-sm text-slate-500">{user.email}</span>}
-            <button
-              onClick={handleLogout}
-              title="Déconnexion"
-              className="p-2 text-slate-500 hover:text-slate-300 transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setShowModal(true)}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-medium transition-colors"
-            >
-              <Plus className="w-5 h-5" />
-              Nouveau projet
-            </button>
-          </div>
+          <button
+            onClick={() => setShowModal(true)}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg font-medium transition-colors"
+          >
+            <Plus className="w-5 h-5" />
+            Nouveau projet
+          </button>
         </div>
 
         {isLoading ? (
@@ -512,8 +552,9 @@ export default function ProjectsPage() {
           </div>
         )}
       </div>
+      </div>
 
       {showModal && <NewProjectModal onClose={() => setShowModal(false)} />}
-    </div>
+    </AppLayout>
   )
 }

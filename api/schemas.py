@@ -15,6 +15,7 @@ class LLMConfigSchema(BaseModel):
     provider: str = Field(examples=["ollama", "openai", "anthropic"])
     model: str = Field(examples=["gpt-oss:20b", "gpt-4o", "claude-haiku-4-5-20251001"])
     api_key: Optional[str] = None
+    api_key_id: Optional[str] = None  # ID d'une clé stockée — résolu côté serveur
     api_base: Optional[str] = Field(default="http://localhost:11434", examples=["http://localhost:11434"])
     thinking: Optional[str] = Field(default=None, examples=["off", "low", "medium", "high"])
 

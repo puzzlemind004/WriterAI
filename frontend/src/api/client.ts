@@ -81,8 +81,16 @@ export interface LLMConfig {
   provider: string
   model: string
   api_key?: string
+  api_key_id?: string
   api_base?: string
   thinking?: 'off' | 'low' | 'medium' | 'high'
+}
+
+export interface ApiKeyResponse {
+  id: string
+  label: string
+  provider: string
+  created_at: string
 }
 
 export interface ProjectCreateRequest {
@@ -198,5 +206,27 @@ export const api = {
     chapters: (id: string) => request<ChapterResponse[]>(`/projects/${id}/chapters`),
     chapter: (id: string, num: number) => request<ChapterResponse>(`/projects/${id}/chapters/${num}`),
     lorebook: (id: string) => request<LorebookResponse>(`/projects/${id}/lorebook`),
+  },
+
+  models: {
+    list: (source: string) =>
+      request<{ provider: string; models: string[] }>(`/models?source=${encodeURIComponent(source)}`),
+  },
+
+  account: {
+    me: () => request<UserResponse>('/account/me'),
+    changePassword: (current_password: string, new_password: string) =>
+      request<void>('/account/password', {
+        method: 'POST',
+        body: JSON.stringify({ current_password, new_password }),
+      }),
+    listApiKeys: () => request<ApiKeyResponse[]>('/account/api-keys'),
+    createApiKey: (label: string, provider: string, key_value: string) =>
+      request<ApiKeyResponse>('/account/api-keys', {
+        method: 'POST',
+        body: JSON.stringify({ label, provider, key_value }),
+      }),
+    deleteApiKey: (id: string) =>
+      request<void>(`/account/api-keys/${id}`, { method: 'DELETE' }),
   },
 }

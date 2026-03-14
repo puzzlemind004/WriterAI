@@ -8,6 +8,7 @@ import {
   Download, FileText, Star, RotateCcw, Wifi, WifiOff,
 } from 'lucide-react'
 import { api, type ChapterResponse } from '../api/client'
+import AppLayout from '../components/AppLayout'
 
 // ─────────────────────────────────────────────
 //  SSE hook — reconnexion automatique (point 8)
@@ -589,7 +590,8 @@ export default function ProjectPage() {
     .reduce((sum, c) => sum + (c.content?.split(/\s+/).filter(Boolean).length ?? 0), 0) ?? 0
 
   return (
-    <div className="min-h-screen bg-slate-950 p-8">
+    <AppLayout>
+    <div className="p-8">
       <div className="max-w-3xl mx-auto">
         <button
           onClick={() => navigate('/')}
@@ -668,5 +670,6 @@ export default function ProjectPage() {
         {id && <LorebookSection projectId={id} />}
       </div>
     </div>
+    </AppLayout>
   )
 }
