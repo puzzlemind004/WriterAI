@@ -175,13 +175,6 @@ function NewProjectModal({ onClose }: { onClose: () => void }) {
   const inputCls = "w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 text-sm"
   const labelCls = "block text-xs font-medium text-slate-400 mb-1"
 
-  // Construire les options pour le select de source
-  const sourceOptions = [
-    { value: 'local', label: 'Local (Ollama)', group: 'Local' },
-    ...apiKeys.map(k => ({ value: k.id, label: k.label, group: k.provider })),
-  ]
-  const singleOption = sourceOptions.length === 1
-
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
       <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-xl max-h-[90vh] overflow-y-auto">

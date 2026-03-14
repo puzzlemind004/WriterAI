@@ -87,3 +87,46 @@ class LorebookResponse(BaseModel):
     characters: dict[str, str]  # nom -> contenu markdown
     places: dict[str, str]
     lore: dict[str, str]
+
+
+# ------------------------------------------------------------------ #
+#  Edition projet                                                      #
+# ------------------------------------------------------------------ #
+
+class ProjectUpdateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    source_text: Optional[str] = Field(default=None, min_length=10)
+    llm: Optional[LLMConfigSchema] = None
+    target_chapter_count: Optional[int] = Field(default=None, ge=1, le=100)
+    writing_style: Optional[str] = None
+    tone_keywords: Optional[list[str]] = None
+    min_validation_score: Optional[float] = Field(default=None, ge=0.0, le=10.0)
+    max_revision_attempts: Optional[int] = Field(default=None, ge=1, le=20)
+
+
+# ------------------------------------------------------------------ #
+#  Edition chapitre                                                    #
+# ------------------------------------------------------------------ #
+
+class ChapterUpdateRequest(BaseModel):
+    content: str = Field(min_length=1)
+    title: Optional[str] = None
+
+
+class ChapterVersionResponse(BaseModel):
+    version: int
+    content: str
+    word_count: int
+
+
+# ------------------------------------------------------------------ #
+#  Révision ciblée                                                     #
+# ------------------------------------------------------------------ #
+
+class TargetedComment(BaseModel):
+    selected_text: str
+    comment: str
+
+
+class ChapterRevisionRequest(BaseModel):
+    comments: list[TargetedComment] = Field(min_length=1)

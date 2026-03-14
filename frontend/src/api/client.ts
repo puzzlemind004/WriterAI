@@ -93,6 +93,28 @@ export interface ApiKeyResponse {
   created_at: string
 }
 
+export interface ProjectUpdateRequest {
+  name?: string
+  source_text?: string
+  llm?: LLMConfig
+  target_chapter_count?: number
+  writing_style?: string
+  tone_keywords?: string[]
+  min_validation_score?: number
+  max_revision_attempts?: number
+}
+
+export interface ChapterVersionResponse {
+  version: number
+  content: string
+  word_count: number
+}
+
+export interface TargetedComment {
+  selected_text: string
+  comment: string
+}
+
 export interface ProjectCreateRequest {
   name: string
   source_text: string
@@ -192,6 +214,8 @@ export const api = {
     get: (id: string) => request<Project>(`/projects/${id}`),
     create: (data: ProjectCreateRequest) =>
       request<Project>('/projects', { method: 'POST', body: JSON.stringify(data) }),
+    update: (id: string, data: ProjectUpdateRequest) =>
+      request<Project>(`/projects/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
     delete: (id: string) =>
       request<void>(`/projects/${id}`, { method: 'DELETE' }),
   },
@@ -205,6 +229,18 @@ export const api = {
   content: {
     chapters: (id: string) => request<ChapterResponse[]>(`/projects/${id}/chapters`),
     chapter: (id: string, num: number) => request<ChapterResponse>(`/projects/${id}/chapters/${num}`),
+    updateChapter: (id: string, num: number, content: string, title?: string) =>
+      request<ChapterResponse>(`/projects/${id}/chapters/${num}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ content, title }),
+      }),
+    chapterVersions: (id: string, num: number) =>
+      request<ChapterVersionResponse[]>(`/projects/${id}/chapters/${num}/versions`),
+    reviseChapter: (id: string, num: number, comments: TargetedComment[]) =>
+      request<ChapterResponse>(`/projects/${id}/chapters/${num}/revise`, {
+        method: 'POST',
+        body: JSON.stringify({ comments }),
+      }),
     lorebook: (id: string) => request<LorebookResponse>(`/projects/${id}/lorebook`),
   },
 

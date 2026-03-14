@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from api.dependencies import db_session, get_current_user
-from api.schemas import ProjectCreateRequest, ProjectDetail, ProjectSummary
+from api.schemas import ProjectCreateRequest, ProjectUpdateRequest, ProjectDetail, ProjectSummary
 from api import background
 from engine.storage.models import Project, Chapter, User, ApiKey
 from engine.storage.file_manager import FileManager
@@ -137,6 +137,73 @@ async def get_project(
         chapter_count=len(project.chapters),
         chapters_done=sum(1 for ch in project.chapters if ch.state == "validated"),
         source_text=getattr(project, "source_text", ""),
+        llm_provider=project.llm_provider,
+        llm_model=project.llm_model,
+        llm_thinking=project.llm_thinking,
+        target_chapter_count=project.target_chapter_count,
+        writing_style=project.writing_style,
+        tone_keywords=project.tone_keywords or [],
+        min_validation_score=project.min_validation_score,
+        max_revision_attempts=project.max_revision_attempts,
+    )
+
+
+@router.patch("/{project_id}", response_model=ProjectDetail)
+async def update_project(
+    project_id: str,
+    body: ProjectUpdateRequest,
+    session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
+):
+    if background.is_running(project_id):
+        raise HTTPException(status_code=409, detail="Pipeline en cours, impossible de modifier")
+
+    project = await session.get(Project, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+
+    if body.name is not None:
+        project.name = body.name
+    if body.source_text is not None:
+        project.source_text = body.source_text
+    if body.target_chapter_count is not None:
+        project.target_chapter_count = body.target_chapter_count
+    if body.writing_style is not None:
+        project.writing_style = body.writing_style
+    if body.tone_keywords is not None:
+        project.tone_keywords = body.tone_keywords
+    if body.min_validation_score is not None:
+        project.min_validation_score = body.min_validation_score
+    if body.max_revision_attempts is not None:
+        project.max_revision_attempts = body.max_revision_attempts
+
+    if body.llm is not None:
+        resolved_api_key = body.llm.api_key
+        if not resolved_api_key and body.llm.api_key_id:
+            result = await session.execute(
+                select(ApiKey).where(ApiKey.id == body.llm.api_key_id, ApiKey.user_id == current_user.id)
+            )
+            stored_key = result.scalar_one_or_none()
+            if not stored_key:
+                raise HTTPException(status_code=404, detail="Clé API introuvable")
+            resolved_api_key = stored_key.key_value
+
+        project.llm_provider = body.llm.provider
+        project.llm_model = body.llm.model
+        project.llm_thinking = body.llm.thinking
+        project.llm_api_key = resolved_api_key
+        project.llm_api_base = body.llm.api_base if body.llm.provider == "ollama" else None
+
+    await session.flush()
+
+    return ProjectDetail(
+        id=project.id,
+        name=project.name,
+        created_at=project.created_at,
+        status=_project_status(project_id),
+        chapter_count=len(project.chapters),
+        chapters_done=sum(1 for ch in project.chapters if ch.state == "validated"),
+        source_text=project.source_text or "",
         llm_provider=project.llm_provider,
         llm_model=project.llm_model,
         llm_thinking=project.llm_thinking,

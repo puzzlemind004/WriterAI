@@ -6,16 +6,17 @@ import {
   Users, MapPin, Scroll, ChevronDown, ChevronUp,
   CheckCircle, Clock, PenLine, AlertCircle, Eye,
   Download, FileText, Star, RotateCcw, Wifi, WifiOff,
+  Settings, Save, X, History, MessageSquare, Send,
 } from 'lucide-react'
-import { api, type ChapterResponse } from '../api/client'
+import { api, type ChapterResponse, type Project } from '../api/client'
 import AppLayout from '../components/AppLayout'
 
 // ─────────────────────────────────────────────
-//  SSE hook — reconnexion automatique (point 8)
+//  SSE hook
 // ─────────────────────────────────────────────
 
 const SSE_MAX_RETRIES = 10
-const SSE_BASE_DELAY = 2000   // ms, doublement exponentiel plafonné à 30 s
+const SSE_BASE_DELAY = 2000
 
 function useSSE(projectId: string, isRunning: boolean) {
   const qc = useQueryClient()
@@ -44,7 +45,6 @@ function useSSE(projectId: string, isRunning: boolean) {
       esRef.current = null
       setSseState('disconnected')
 
-      // Reconnexion exponentielle si le pipeline tourne encore
       if (retryRef.current < SSE_MAX_RETRIES) {
         const delay = Math.min(SSE_BASE_DELAY * 2 ** retryRef.current, 30000)
         retryRef.current += 1
@@ -99,7 +99,6 @@ function useSSE(projectId: string, isRunning: boolean) {
     }
   }, [projectId, qc])
 
-  // Lance le SSE automatiquement si le pipeline tourne au montage
   useEffect(() => {
     if (isRunning) {
       retryRef.current = 0
@@ -111,7 +110,6 @@ function useSSE(projectId: string, isRunning: boolean) {
     }
   }, [isRunning, connect])
 
-  // Réinitialise le compteur de retries quand on relance manuellement
   const connectFresh = useCallback(() => {
     retryRef.current = 0
     connect()
@@ -121,7 +119,7 @@ function useSSE(projectId: string, isRunning: boolean) {
 }
 
 // ─────────────────────────────────────────────
-//  Pipeline bar (point 7 : erreur visible)
+//  Pipeline bar
 // ─────────────────────────────────────────────
 
 function PipelineBar({ projectId }: { projectId: string }) {
@@ -180,7 +178,6 @@ function PipelineBar({ projectId }: { projectId: string }) {
               </span>
             )}
 
-            {/* Indicateur SSE (point 8) */}
             {isRunning && (
               <span className="ml-auto text-xs flex items-center gap-1" title={sseState === 'connected' ? 'Connexion temps réel active' : 'Reconnexion en cours…'}>
                 {sseState === 'connected'
@@ -191,7 +188,6 @@ function PipelineBar({ projectId }: { projectId: string }) {
             )}
           </div>
 
-          {/* Message d'erreur détaillé (point 7) */}
           {status.status === 'error' && status.error && (
             <div className="mt-2 text-xs text-red-300 bg-red-900/30 border border-red-800/50 rounded-lg px-3 py-2 break-words">
               <span className="font-medium">Erreur : </span>{status.error}
@@ -226,7 +222,122 @@ function PipelineBar({ projectId }: { projectId: string }) {
 }
 
 // ─────────────────────────────────────────────
-//  Chapter item (point 5 : détails révisions)
+//  Edit project modal
+// ─────────────────────────────────────────────
+
+function EditProjectModal({ project, onClose }: { project: Project; onClose: () => void }) {
+  const qc = useQueryClient()
+  const [name, setName] = useState(project.name)
+  const [sourceText, setSourceText] = useState(project.source_text ?? '')
+  const [writingStyle, setWritingStyle] = useState(project.writing_style ?? '')
+  const [toneKeywords, setToneKeywords] = useState((project.tone_keywords ?? []).join(', '))
+  const [targetChapters, setTargetChapters] = useState(String(project.target_chapter_count ?? ''))
+
+  const update = useMutation({
+    mutationFn: () => api.projects.update(project.id, {
+      name: name.trim() || undefined,
+      source_text: sourceText.trim() || undefined,
+      writing_style: writingStyle.trim() || undefined,
+      tone_keywords: toneKeywords ? toneKeywords.split(',').map(k => k.trim()).filter(Boolean) : [],
+      target_chapter_count: targetChapters ? parseInt(targetChapters) : undefined,
+    }),
+    onSuccess: (data) => {
+      qc.setQueryData(['project', project.id], data)
+      qc.invalidateQueries({ queryKey: ['projects'] })
+      onClose()
+    },
+  })
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg mx-4 shadow-2xl">
+        <div className="flex items-center justify-between p-5 border-b border-slate-800">
+          <h2 className="text-white font-semibold">Modifier le projet</h2>
+          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4 max-h-[70vh] overflow-y-auto">
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Nom du projet</label>
+            <input
+              value={name}
+              onChange={e => setName(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Synopsis / Pitch</label>
+            <textarea
+              value={sourceText}
+              onChange={e => setSourceText(e.target.value)}
+              rows={5}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 resize-none"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Style d'écriture</label>
+            <input
+              value={writingStyle}
+              onChange={e => setWritingStyle(e.target.value)}
+              placeholder="ex: roman noir, fantaisie épique…"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Mots-clés de ton (séparés par des virgules)</label>
+            <input
+              value={toneKeywords}
+              onChange={e => setToneKeywords(e.target.value)}
+              placeholder="ex: sombre, introspectif, lyrique"
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">Nombre de chapitres cible</label>
+            <input
+              type="number"
+              min={1}
+              max={100}
+              value={targetChapters}
+              onChange={e => setTargetChapters(e.target.value)}
+              className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3 p-5 border-t border-slate-800">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+          >
+            Annuler
+          </button>
+          <button
+            onClick={() => update.mutate()}
+            disabled={update.isPending || !name.trim()}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {update.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Enregistrer
+          </button>
+        </div>
+
+        {update.isError && (
+          <p className="text-xs text-red-400 px-5 pb-4">{(update.error as Error).message}</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+//  Chapter item
 // ─────────────────────────────────────────────
 
 const STATE_CONFIG: Record<string, { label: string; color: string; Icon: React.FC<{ className?: string }> }> = {
@@ -251,18 +362,311 @@ function ScoreBar({ score }: { score: number }) {
   )
 }
 
-function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
-  const [open, setOpen] = useState(false)
-  const [tab, setTab] = useState<'content' | 'details'>('content')
-  const cfg = STATE_CONFIG[chapter.state] ?? STATE_CONFIG.planned
-  const hasContent = !!chapter.content
+// Selection-based comment bubble
+interface CommentBubble {
+  text: string
+  top: number
+  left: number
+}
 
-  // Retire la première ligne si c'est le titre markdown (# ...) et découpe en scènes sur ---
+function ChapterEditor({ projectId, chapter }: { projectId: string; chapter: ChapterResponse }) {
+  const qc = useQueryClient()
+  const [editMode, setEditMode] = useState(false)
+  const [editContent, setEditContent] = useState(chapter.content ?? '')
+  const [editTitle, setEditTitle] = useState(chapter.title ?? '')
+  const [bubble, setBubble] = useState<CommentBubble | null>(null)
+  const [commentText, setCommentText] = useState('')
+  const [pendingComments, setPendingComments] = useState<Array<{ selected_text: string; comment: string }>>([])
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  // Sync when chapter updates
+  useEffect(() => {
+    if (!editMode) {
+      setEditContent(chapter.content ?? '')
+      setEditTitle(chapter.title ?? '')
+    }
+  }, [chapter, editMode])
+
+  const saveEdit = useMutation({
+    mutationFn: () => api.content.updateChapter(projectId, chapter.number, editContent, editTitle || undefined),
+    onSuccess: (data) => {
+      qc.setQueryData(['chapters', projectId], (old: ChapterResponse[] | undefined) =>
+        old?.map(ch => ch.number === chapter.number ? data : ch)
+      )
+      setEditMode(false)
+    },
+  })
+
+  const revise = useMutation({
+    mutationFn: () => api.content.reviseChapter(projectId, chapter.number, pendingComments),
+    onSuccess: (data) => {
+      qc.setQueryData(['chapters', projectId], (old: ChapterResponse[] | undefined) =>
+        old?.map(ch => ch.number === chapter.number ? data : ch)
+      )
+      setPendingComments([])
+      setBubble(null)
+    },
+  })
+
+  function handleMouseUp() {
+    if (editMode) return
+    const sel = window.getSelection()
+    if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+      setBubble(null)
+      return
+    }
+    const range = sel.getRangeAt(0)
+    const rect = range.getBoundingClientRect()
+    const containerRect = contentRef.current?.getBoundingClientRect()
+    if (!containerRect) return
+
+    setBubble({
+      text: sel.toString().trim(),
+      top: rect.top - containerRect.top - 40,
+      left: rect.left - containerRect.left + rect.width / 2,
+    })
+  }
+
+  function addComment() {
+    if (!bubble || !commentText.trim()) return
+    setPendingComments(prev => [...prev, { selected_text: bubble.text, comment: commentText.trim() }])
+    setCommentText('')
+    setBubble(null)
+    window.getSelection()?.removeAllRanges()
+  }
+
   const scenes = (chapter.content ?? '')
-    .replace(/^#[^\n]*\n?/, '')   // retire le titre
+    .replace(/^#[^\n]*\n?/, '')
     .split(/\n---\n/)
     .map(s => s.trim())
     .filter(Boolean)
+
+  if (editMode) {
+    return (
+      <div className="px-6 py-5 space-y-4">
+        <div>
+          <label className="text-xs text-slate-500 mb-1 block">Titre du chapitre</label>
+          <input
+            value={editTitle}
+            onChange={e => setEditTitle(e.target.value)}
+            placeholder={`Chapitre ${chapter.number}`}
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-slate-500 mb-1 block">Contenu</label>
+          <textarea
+            value={editContent}
+            onChange={e => setEditContent(e.target.value)}
+            rows={20}
+            className="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500 resize-y font-serif leading-relaxed"
+          />
+        </div>
+        <div className="flex justify-end gap-3">
+          <button
+            onClick={() => { setEditMode(false); setEditContent(chapter.content ?? ''); setEditTitle(chapter.title ?? '') }}
+            className="px-4 py-2 text-sm text-slate-400 hover:text-white transition-colors"
+          >
+            Annuler
+          </button>
+          <button
+            onClick={() => saveEdit.mutate()}
+            disabled={saveEdit.isPending || !editContent.trim()}
+            className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+          >
+            {saveEdit.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+            Enregistrer
+          </button>
+        </div>
+        {saveEdit.isError && (
+          <p className="text-xs text-red-400">{(saveEdit.error as Error).message}</p>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div className="px-6 py-5">
+      {/* Toolbar */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          {pendingComments.length > 0 && (
+            <span className="text-xs text-indigo-400 bg-indigo-900/30 border border-indigo-800 rounded-full px-2 py-0.5">
+              {pendingComments.length} commentaire{pendingComments.length > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {pendingComments.length > 0 && (
+            <button
+              onClick={() => revise.mutate()}
+              disabled={revise.isPending}
+              className="flex items-center gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white px-3 py-1.5 rounded-lg transition-colors"
+            >
+              {revise.isPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+              {revise.isPending ? 'Révision en cours…' : 'Réviser avec l\'IA'}
+            </button>
+          )}
+          {pendingComments.length > 0 && (
+            <button
+              onClick={() => setPendingComments([])}
+              className="text-xs text-slate-500 hover:text-red-400 transition-colors"
+            >
+              Vider
+            </button>
+          )}
+          <button
+            onClick={() => setEditMode(true)}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-white border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors"
+          >
+            <PenLine className="w-3 h-3" />
+            Éditer
+          </button>
+        </div>
+      </div>
+
+      {/* Pending comments list */}
+      {pendingComments.length > 0 && (
+        <div className="mb-4 space-y-2">
+          {pendingComments.map((c, i) => (
+            <div key={i} className="bg-indigo-950/40 border border-indigo-800/50 rounded-lg px-3 py-2 text-xs">
+              <p className="text-indigo-300 italic mb-1 truncate">«{c.selected_text.slice(0, 80)}{c.selected_text.length > 80 ? '…' : ''}»</p>
+              <p className="text-slate-300">{c.comment}</p>
+              <button
+                onClick={() => setPendingComments(prev => prev.filter((_, j) => j !== i))}
+                className="text-slate-600 hover:text-red-400 mt-1 transition-colors"
+              >
+                Supprimer
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {revise.isError && (
+        <p className="text-xs text-red-400 mb-4">{(revise.error as Error).message}</p>
+      )}
+
+      {/* Content with selection support */}
+      <div ref={contentRef} className="relative select-text" onMouseUp={handleMouseUp}>
+        {/* Comment bubble */}
+        {bubble && (
+          <div
+            className="absolute z-30 bg-slate-800 border border-slate-600 rounded-xl shadow-2xl p-3 w-72"
+            style={{ top: bubble.top, left: Math.max(0, bubble.left - 144), transform: 'none' }}
+          >
+            <p className="text-xs text-slate-400 mb-2 italic truncate">
+              «{bubble.text.slice(0, 60)}{bubble.text.length > 60 ? '…' : ''}»
+            </p>
+            <div className="flex gap-2">
+              <input
+                autoFocus
+                value={commentText}
+                onChange={e => setCommentText(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') addComment(); if (e.key === 'Escape') setBubble(null) }}
+                placeholder="Votre commentaire…"
+                className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-2 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+              />
+              <button
+                onClick={addComment}
+                disabled={!commentText.trim()}
+                className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white p-1.5 rounded-lg transition-colors flex-shrink-0"
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => setBubble(null)} className="text-slate-500 hover:text-white p-1.5 transition-colors">
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="space-y-8">
+          {scenes.map((scene, i) => (
+            <div key={i}>
+              {scenes.length > 1 && (
+                <p className="text-xs text-slate-600 mb-3 font-mono">— Scène {i + 1} —</p>
+              )}
+              <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-serif">
+                {scene}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {!bubble && !editMode && (
+          <p className="text-xs text-slate-700 mt-6 italic text-center select-none">
+            Sélectionnez du texte pour ajouter un commentaire
+          </p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Version history tab
+function VersionsTab({ projectId, chapterNumber }: { projectId: string; chapterNumber: number }) {
+  const [selected, setSelected] = useState<number | null>(null)
+
+  const { data: versions, isLoading } = useQuery({
+    queryKey: ['versions', projectId, chapterNumber],
+    queryFn: () => api.content.chapterVersions(projectId, chapterNumber),
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  })
+
+  if (isLoading) return (
+    <div className="flex justify-center py-8">
+      <Loader2 className="w-5 h-5 animate-spin text-slate-600" />
+    </div>
+  )
+
+  if (!versions?.length) return (
+    <div className="text-center py-8 text-slate-600 text-sm">
+      Aucune version antérieure disponible
+    </div>
+  )
+
+  const current = selected !== null ? versions[selected] : null
+
+  return (
+    <div className="flex min-h-64 divide-x divide-slate-800">
+      {/* Version list */}
+      <div className="w-40 flex-shrink-0 py-2">
+        {versions.map((v, i) => (
+          <button
+            key={i}
+            onClick={() => setSelected(i === selected ? null : i)}
+            className={`w-full text-left px-4 py-2.5 text-xs transition-colors ${
+              selected === i
+                ? 'bg-indigo-900/40 text-indigo-300'
+                : 'text-slate-400 hover:bg-slate-800 hover:text-white'
+            }`}
+          >
+            <p className="font-medium">Version {v.version}</p>
+            <p className="text-slate-600 mt-0.5">{v.word_count} mots</p>
+          </button>
+        ))}
+      </div>
+      {/* Content */}
+      <div className="flex-1 p-4 overflow-auto">
+        {current ? (
+          <div className="text-xs text-slate-300 leading-relaxed whitespace-pre-wrap font-serif">
+            {current.content}
+          </div>
+        ) : (
+          <p className="text-sm text-slate-600 italic">Sélectionnez une version</p>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ChapterItem({ projectId, chapter }: { projectId: string; chapter: ChapterResponse }) {
+  const [open, setOpen] = useState(false)
+  const [tab, setTab] = useState<'content' | 'details' | 'versions'>('content')
+  const cfg = STATE_CONFIG[chapter.state] ?? STATE_CONFIG.planned
+  const hasContent = !!chapter.content
 
   return (
     <div className="border border-slate-800 rounded-lg overflow-hidden">
@@ -305,10 +709,10 @@ function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
         </div>
       </button>
 
-      {/* Corps déplié */}
+      {/* Body */}
       {open && hasContent && (
         <div className="border-t border-slate-800">
-          {/* Onglets */}
+          {/* Tabs */}
           <div className="flex border-b border-slate-800">
             <button
               onClick={() => setTab('content')}
@@ -322,26 +726,21 @@ function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
             >
               Détails
             </button>
+            <button
+              onClick={() => setTab('versions')}
+              className={`flex items-center gap-1 px-4 py-2 text-xs transition-colors ${tab === 'versions' ? 'text-white border-b-2 border-indigo-500' : 'text-slate-500 hover:text-slate-300'}`}
+            >
+              <History className="w-3 h-3" />
+              Historique
+            </button>
           </div>
 
           {tab === 'content' && (
-            <div className="px-6 py-5 space-y-8">
-              {scenes.map((scene, i) => (
-                <div key={i}>
-                  {scenes.length > 1 && (
-                    <p className="text-xs text-slate-600 mb-3 font-mono">— Scène {i + 1} —</p>
-                  )}
-                  <div className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap font-serif">
-                    {scene}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ChapterEditor projectId={projectId} chapter={chapter} />
           )}
 
           {tab === 'details' && (
             <div className="px-6 py-5 space-y-5">
-              {/* Stats */}
               <div className="grid grid-cols-3 gap-3">
                 <div className="bg-slate-800/50 rounded-lg p-3 text-center">
                   <p className="text-lg font-bold text-white">{chapter.content?.split(/\s+/).filter(Boolean).length ?? 0}</p>
@@ -359,7 +758,6 @@ function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
                 </div>
               </div>
 
-              {/* Score critique */}
               {chapter.score != null && (
                 <div>
                   <p className="text-xs text-slate-500 mb-2">Note du critique</p>
@@ -367,7 +765,6 @@ function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
                 </div>
               )}
 
-              {/* Commentaires du critique */}
               {(chapter.critic_comments?.length ?? 0) > 0 && (
                 <div>
                   <p className="text-xs text-slate-500 mb-2">Retours du critique</p>
@@ -382,7 +779,6 @@ function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
                 </div>
               )}
 
-              {/* Brief / fiche narrative */}
               {chapter.brief && (
                 <div>
                   <p className="text-xs text-slate-500 mb-2">Fiche narrative</p>
@@ -393,6 +789,10 @@ function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
               )}
             </div>
           )}
+
+          {tab === 'versions' && (
+            <VersionsTab projectId={projectId} chapterNumber={chapter.number} />
+          )}
         </div>
       )}
     </div>
@@ -400,7 +800,7 @@ function ChapterItem({ chapter }: { chapter: ChapterResponse }) {
 }
 
 // ─────────────────────────────────────────────
-//  Export (point 4)
+//  Export
 // ─────────────────────────────────────────────
 
 function ExportButton({ projectName, chapters }: { projectName: string; chapters: ChapterResponse[] }) {
@@ -420,25 +820,13 @@ function ExportButton({ projectName, chapters }: { projectName: string; chapters
     return lines.join('\n')
   }
 
-  function downloadMarkdown() {
+  function download(ext: string, type: string) {
     const md = buildMarkdown()
-    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
+    const blob = new Blob([md], { type: `${type};charset=utf-8` })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.md`
-    a.click()
-    URL.revokeObjectURL(url)
-    setOpen(false)
-  }
-
-  function downloadTxt() {
-    const md = buildMarkdown()
-    const blob = new Blob([md], { type: 'text/plain;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.txt`
+    a.download = `${projectName.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.${ext}`
     a.click()
     URL.revokeObjectURL(url)
     setOpen(false)
@@ -459,14 +847,14 @@ function ExportButton({ projectName, chapters }: { projectName: string; chapters
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 top-full mt-1 z-20 bg-slate-800 border border-slate-700 rounded-lg shadow-xl w-44 overflow-hidden">
             <button
-              onClick={downloadMarkdown}
+              onClick={() => download('md', 'text/markdown')}
               className="w-full flex items-center gap-2 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors text-left"
             >
               <FileText className="w-4 h-4 text-slate-500" />
               Markdown (.md)
             </button>
             <button
-              onClick={downloadTxt}
+              onClick={() => download('txt', 'text/plain')}
               className="w-full flex items-center gap-2 px-4 py-3 text-sm text-slate-300 hover:bg-slate-700 transition-colors text-left"
             >
               <FileText className="w-4 h-4 text-slate-500" />
@@ -566,6 +954,7 @@ function LorebookSection({ projectId }: { projectId: string }) {
 export default function ProjectPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const [showEditModal, setShowEditModal] = useState(false)
 
   const { data: project, error: projectError } = useQuery({
     queryKey: ['project', id],
@@ -591,85 +980,100 @@ export default function ProjectPage() {
 
   return (
     <AppLayout>
-    <div className="p-8">
-      <div className="max-w-3xl mx-auto">
-        <button
-          onClick={() => navigate('/')}
-          className="flex items-center gap-2 text-slate-500 hover:text-white mb-6 transition-colors text-sm"
-        >
-          <ArrowLeft className="w-4 h-4" />
-          Projets
-        </button>
+      <div className="p-8">
+        <div className="max-w-3xl mx-auto">
+          <button
+            onClick={() => navigate('/')}
+            className="flex items-center gap-2 text-slate-500 hover:text-white mb-6 transition-colors text-sm"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Projets
+          </button>
 
-        {projectError ? (
-          <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 mb-6 text-red-400 text-sm">
-            Impossible de charger le projet : {(projectError as Error).message}
-          </div>
-        ) : project && (
-          <div className="mb-6">
-            <h1 className="text-2xl font-bold text-white">{project.name}</h1>
-            <div className="flex items-center gap-3 mt-1 text-sm text-slate-500 flex-wrap">
-              {project.writing_style && <span>{project.writing_style}</span>}
-              {project.llm_model && (
-                <>
-                  {project.writing_style && <span>·</span>}
-                  <span>{project.llm_model}</span>
-                  {project.llm_thinking && project.llm_thinking !== 'off' && (
-                    <span className="text-slate-600">thinking={project.llm_thinking}</span>
+          {projectError ? (
+            <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 mb-6 text-red-400 text-sm">
+              Impossible de charger le projet : {(projectError as Error).message}
+            </div>
+          ) : project && (
+            <div className="mb-6 flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h1 className="text-2xl font-bold text-white">{project.name}</h1>
+                <div className="flex items-center gap-3 mt-1 text-sm text-slate-500 flex-wrap">
+                  {project.writing_style && <span>{project.writing_style}</span>}
+                  {project.llm_model && (
+                    <>
+                      {project.writing_style && <span>·</span>}
+                      <span>{project.llm_model}</span>
+                      {project.llm_thinking && project.llm_thinking !== 'off' && (
+                        <span className="text-slate-600">thinking={project.llm_thinking}</span>
+                      )}
+                    </>
                   )}
-                </>
-              )}
-              {totalCount > 0 && (
-                <>
-                  <span>·</span>
-                  <span>{validatedCount}/{totalCount} chapitres rédigés</span>
-                </>
-              )}
-              {wordCount > 0 && (
-                <>
-                  <span>·</span>
-                  <span>{wordCount.toLocaleString('fr')} mots</span>
-                </>
+                  {totalCount > 0 && (
+                    <>
+                      <span>·</span>
+                      <span>{validatedCount}/{totalCount} chapitres rédigés</span>
+                    </>
+                  )}
+                  {wordCount > 0 && (
+                    <>
+                      <span>·</span>
+                      <span>{wordCount.toLocaleString('fr')} mots</span>
+                    </>
+                  )}
+                </div>
+              </div>
+              <button
+                onClick={() => setShowEditModal(true)}
+                className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-white border border-slate-700 hover:border-slate-500 px-3 py-1.5 rounded-lg transition-colors flex-shrink-0"
+              >
+                <Settings className="w-4 h-4" />
+                Modifier
+              </button>
+            </div>
+          )}
+
+          {id && <PipelineBar projectId={id} />}
+
+          {/* Chapitres */}
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold text-white">Chapitres</h2>
+              {chapters && project && (
+                <ExportButton projectName={project.name} chapters={chapters} />
               )}
             </div>
-          </div>
-        )}
 
-        {id && <PipelineBar projectId={id} />}
-
-        {/* Chapitres */}
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-white">Chapitres</h2>
-            {chapters && project && (
-              <ExportButton projectName={project.name} chapters={chapters} />
+            {chaptersError ? (
+              <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 text-red-400 text-sm">
+                Erreur : {(chaptersError as Error).message}
+              </div>
+            ) : chaptersLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="w-6 h-6 animate-spin text-slate-600" />
+              </div>
+            ) : !chapters?.length ? (
+              <div className="text-center py-10 text-slate-700 border border-dashed border-slate-800 rounded-xl">
+                <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-30" />
+                <p className="text-sm">Aucun chapitre pour l'instant</p>
+                <p className="text-xs mt-1 text-slate-800">Lancez le pipeline pour démarrer la génération</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {chapters.map(ch => (
+                  <ChapterItem key={ch.number} projectId={id!} chapter={ch} />
+                ))}
+              </div>
             )}
           </div>
 
-          {chaptersError ? (
-            <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 text-red-400 text-sm">
-              Erreur : {(chaptersError as Error).message}
-            </div>
-          ) : chaptersLoading ? (
-            <div className="flex justify-center py-10">
-              <Loader2 className="w-6 h-6 animate-spin text-slate-600" />
-            </div>
-          ) : !chapters?.length ? (
-            <div className="text-center py-10 text-slate-700 border border-dashed border-slate-800 rounded-xl">
-              <BookOpen className="w-8 h-8 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Aucun chapitre pour l'instant</p>
-              <p className="text-xs mt-1 text-slate-800">Lancez le pipeline pour démarrer la génération</p>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {chapters.map(ch => <ChapterItem key={ch.number} chapter={ch} />)}
-            </div>
-          )}
+          {id && <LorebookSection projectId={id} />}
         </div>
-
-        {id && <LorebookSection projectId={id} />}
       </div>
-    </div>
+
+      {showEditModal && project && (
+        <EditProjectModal project={project} onClose={() => setShowEditModal(false)} />
+      )}
     </AppLayout>
   )
 }

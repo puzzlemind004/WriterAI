@@ -7,8 +7,13 @@ from fastapi import APIRouter, HTTPException, Path, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
+import asyncio
 from api.dependencies import db_session, get_current_user
-from api.schemas import ChapterResponse, LorebookResponse
+from api.schemas import (
+    ChapterResponse, ChapterUpdateRequest, ChapterVersionResponse,
+    ChapterRevisionRequest, LorebookResponse,
+)
+from api import background
 from engine.storage.file_manager import FileManager
 from engine.storage.models import Chapter, Project, User
 
@@ -119,6 +124,158 @@ async def get_chapter(
         title=title,
         state=ch.state,
         content=content or None,
+        score=ch.last_score,
+        revision_count=ch.revision_count,
+        brief=brief,
+        critic_comments=ch.last_critic_comments or [],
+    )
+
+
+@router.patch("/{project_id}/chapters/{number}", response_model=ChapterResponse)
+async def update_chapter(
+    project_id: str,
+    number: int = Path(ge=1),
+    body: ChapterUpdateRequest = ...,
+    session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
+):
+    project = await session.get(Project, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+
+    if background.is_running(project_id):
+        raise HTTPException(status_code=409, detail="Pipeline en cours, impossible de modifier")
+
+    result = await session.execute(
+        select(Chapter).where(Chapter.project_id == project_id, Chapter.number == number)
+    )
+    ch = result.scalar_one_or_none()
+    if not ch:
+        raise HTTPException(status_code=404, detail=f"Chapitre {number} introuvable")
+
+    fm = _get_file_manager(project_id)
+    fm.write_chapter(number, body.content)
+
+    if body.title is not None:
+        ch.title = body.title
+    ch.is_user_controlled = True
+    session.add(ch)
+    await session.flush()
+
+    brief = fm.read_chapter_brief(number) or None
+    return ChapterResponse(
+        number=ch.number,
+        title=ch.title or _extract_title(body.content),
+        state=ch.state,
+        content=body.content,
+        score=ch.last_score,
+        revision_count=ch.revision_count,
+        brief=brief,
+        critic_comments=ch.last_critic_comments or [],
+    )
+
+
+@router.get("/{project_id}/chapters/{number}/versions", response_model=list[ChapterVersionResponse])
+async def get_chapter_versions(
+    project_id: str,
+    number: int = Path(ge=1),
+    session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
+):
+    project = await session.get(Project, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+
+    fm = _get_file_manager(project_id)
+    version_paths = fm.get_chapter_versions(number)
+    versions = []
+    for i, path in enumerate(version_paths, start=1):
+        content = open(path, encoding="utf-8").read()
+        versions.append(ChapterVersionResponse(
+            version=i,
+            content=content,
+            word_count=len(content.split()),
+        ))
+    return versions
+
+
+@router.post("/{project_id}/chapters/{number}/revise", response_model=ChapterResponse)
+async def revise_chapter(
+    project_id: str,
+    number: int = Path(ge=1),
+    body: ChapterRevisionRequest = ...,
+    session: AsyncSession = Depends(db_session),
+    current_user: User = Depends(get_current_user),
+):
+    project = await session.get(Project, project_id)
+    if not project or project.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+
+    if background.is_running(project_id):
+        raise HTTPException(status_code=409, detail="Pipeline en cours, impossible de lancer une révision")
+
+    result = await session.execute(
+        select(Chapter).where(Chapter.project_id == project_id, Chapter.number == number)
+    )
+    ch = result.scalar_one_or_none()
+    if not ch:
+        raise HTTPException(status_code=404, detail=f"Chapitre {number} introuvable")
+
+    fm = _get_file_manager(project_id)
+    chapter_text = fm.read_chapter(number)
+    if not chapter_text.strip():
+        raise HTTPException(status_code=400, detail="Le chapitre est vide, impossible de réviser")
+
+    # Construction du contexte pour le RevisorAgent
+    from engine.agents.revisor import RevisorAgent
+    from engine.agents.base import AgentContext
+    from engine.llm.client import LLMClient, LLMConfig
+
+    commentaires = [
+        f"[Passage ciblé : «\u202f{c.selected_text[:120]}\u202f»] → {c.comment}"
+        for c in body.comments
+    ]
+
+    llm_config = LLMConfig(
+        provider=project.llm_provider,
+        model=project.llm_model,
+        api_key=project.llm_api_key,
+        api_base=project.llm_api_base,
+        thinking=project.llm_thinking,
+    )
+    ctx = AgentContext(
+        project_id=project_id,
+        llm=LLMClient(llm_config),
+        chapter_number=number,
+        chapter_id=ch.id,
+        extra={
+            "commentaires_constructifs": commentaires,
+            "points_faibles": [],
+            "note_globale": ch.last_score or "?",
+            "writing_style": project.writing_style or "",
+            "tone_keywords": project.tone_keywords or [],
+        },
+    )
+
+    agent = RevisorAgent()
+    agent_result = await asyncio.to_thread(agent.run, ctx)
+
+    if not agent_result.success:
+        raise HTTPException(status_code=500, detail=agent_result.error or "Révision échouée")
+
+    # Relit le contenu révisé depuis le fichier
+    content = fm.read_chapter(number) or None
+    brief = fm.read_chapter_brief(number) or None
+    ch.revision_count = (ch.revision_count or 0) + 1
+    ch.is_user_controlled = True
+    session.add(ch)
+    await session.flush()
+
+    return ChapterResponse(
+        number=ch.number,
+        title=ch.title or _extract_title(content or ""),
+        state=ch.state,
+        content=content,
         score=ch.last_score,
         revision_count=ch.revision_count,
         brief=brief,

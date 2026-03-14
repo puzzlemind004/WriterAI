@@ -86,10 +86,11 @@ class LLMClient:
             kwargs["api_key"] = self.config.api_key
         if self.config.api_base:
             kwargs["api_base"] = self.config.api_base
-        if self.config.thinking == "off":
-            kwargs["extra_body"] = {"think": False}
-        elif self.config.thinking in ("low", "medium", "high"):
-            kwargs["extra_body"] = {"reasoning_effort": self.config.thinking}
+        if self.config.provider == "ollama":
+            if self.config.thinking == "off":
+                kwargs["extra_body"] = {"think": False}
+            elif self.config.thinking in ("low", "medium", "high"):
+                kwargs["extra_body"] = {"reasoning_effort": self.config.thinking}
 
         start = time.time()
         try:
